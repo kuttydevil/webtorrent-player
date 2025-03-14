@@ -1188,9 +1188,13 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
         storeCacheSlots: 0,
         store: HybridChunkStore,
         announce: this.tracker.announce || [
-          'wss://tracker.openwebtorrent.com',
-          'wss://spacetradersapi-chatbox.herokuapp.com:443/announce',
-          'wss://peertube.cpy.re:443/tracker/socket'
+          "wss://tracker.btorrent.xyz",
+        "wss://tracker.openwebtorrent.com",
+        "wss://wstracker.online",
+        "wss://asdxwqw.com",
+        "wss://tracker.openwebtorrent.com",
+        "wss://tracker.btorrent.xyz",
+        "wss://tracker.novage.com.ua",
         ]
       }, torrent => {
         handleTorrent(torrent, opts)
@@ -1211,9 +1215,13 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
       store: HybridChunkStore,
       storeCacheSlots: 0,
       announce: this.tracker.announce || [
-        'wss://tracker.openwebtorrent.com',
-        'wss://spacetradersapi-chatbox.herokuapp.com:443/announce',
-        'wss://peertube.cpy.re:443/tracker/socket'
+        "wss://tracker.btorrent.xyz",
+        "wss://tracker.openwebtorrent.com",
+        "wss://wstracker.online",
+        "wss://asdxwqw.com",
+        "wss://tracker.openwebtorrent.com",
+        "wss://tracker.btorrent.xyz",
+        "wss://tracker.novage.com.ua",
       ]
     })
     torrent.on('metadata', () => {
