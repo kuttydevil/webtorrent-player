@@ -183,6 +183,34 @@
           break
       }
     }
+
+
+    // Function to automatically paste the magnet URI from the URL
+    function autoPasteMagnetFromURL() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const torrentParam = urlParams.get('torrent');
+      if (torrentParam) {
+        // Decode the base64 encoded magnet URI
+        try {
+          const decodedMagnet = atob(torrentParam);
+          // Check if decoded string is a magnet URI
+          if (decodedMagnet.startsWith('magnet:?')) {
+            // Clear the input field and then paste after a delay
+            document.getElementById('magn').value = '';  //clear first
+            setTimeout(() => {
+                document.getElementById('magn').value = decodedMagnet;
+            }, 100); // 50ms delay.  Adjust as needed.
+          }
+        } catch (error) {
+          console.error("Error decoding or invalid magnet URI:", error);
+        }
+      }
+    }
+
+    // Call the function when the page loads
+    autoPasteMagnetFromURL();
+
+    
   </script>
 </body>
 
