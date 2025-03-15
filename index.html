@@ -22,7 +22,67 @@
       background-color: #141416;
       height: 100vh;
       width: 100%;
+      display: flex; /* Add flexbox to body */
+      flex-direction: column; /* Stack children vertically */
     }
+
+    /* Style for SVG buttons */
+    .svg-button {
+      background: none;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      width: 48px;
+      height: 48px;
+      /* margin: 0.5rem;  Removed margin. Flex container will handle spacing */
+    }
+
+    .svg-button svg {
+      width: 100%;
+      height: 100%;
+      fill: #ececec;
+      transition: fill 0.2s ease;
+    }
+
+    .svg-button:hover svg {
+      fill: #e5204c;
+    }
+
+    .svg-button:active svg {
+      transform: scale(0.9);
+    }
+
+    #magn {
+      visibility: hidden;
+      /* Hide but take up space.  Consider removing this if you want to center everything */
+        width: 100%; /* Make the input full-width */
+        max-width: 500px; /* But limit its maximum width (optional) */
+        padding: 0.5rem;  /* Add some padding inside the input */
+        margin-bottom: 0.5rem;  /* Add space below the input */
+    }
+
+
+
+    /* Centering the button */
+    #button-container {
+      display: flex;
+      flex-direction: column; /* Stack input and button vertically */
+      justify-content: center;  /* Center horizontally */
+      align-items: center;      /* Center vertically */
+      margin-top: 1rem;  /* Space above the input/button row */
+      margin-bottom: 1rem;
+      flex: 1; /* Take remaining space after video */
+    }
+
+      /* Remove horizontal margins from container's children */
+/*     #button-container > *{
+        margin-left: 0;
+        margin-right: 0;
+    } */
+
   </style>
 </head>
 
