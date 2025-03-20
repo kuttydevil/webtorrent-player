@@ -539,29 +539,53 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
   playNext () {
     clearTimeout(this.nextTimeout)
     this.nextTimeout = setTimeout(() => {
-      if (this.videoFiles?.indexOf(this.currentFile) < this.videoFiles?.length - 1) {
-        const nowPlaying = this.nowPlaying
-        nowPlaying.episodeNumber += 1
-        const torrent = this.currentFile._torrent
-        this.buildVideo(torrent, { media: nowPlaying, file: this.videoFiles[this.videoFiles.indexOf(this.currentFile) + 1] })
-      } else {
-        this.emit('next', { file: this.currentFile, filemedia: this.nowPlaying })
+      if (this.videoFiles) { // Ensure videoFiles is not undefined
+        let currentFileIndex = -1;
+        for (let i = 0; i < this.videoFiles.length; i++) {
+          if (this.videoFiles[i].name === this.currentFile.name) {
+            currentFileIndex = i;
+            break;
+          }
+        }
+
+        if (currentFileIndex !== -1 && currentFileIndex < this.videoFiles.length - 1) {
+          const nowPlaying = this.nowPlaying;
+          if (nowPlaying && nowPlaying.episodeNumber != null) { // Check if nowPlaying and episodeNumber exist before incrementing
+            nowPlaying.episodeNumber += 1;
+          }
+          const torrent = this.currentFile._torrent;
+          this.buildVideo(torrent, { media: nowPlaying, file: this.videoFiles[currentFileIndex + 1] });
+        } else {
+          this.emit('next', { file: this.currentFile, filemedia: this.nowPlaying });
+        }
       }
-    }, 200)
+    }, 200);
   }
 
   playLast () {
     clearTimeout(this.nextTimeout)
     this.nextTimeout = setTimeout(() => {
-      if (this.videoFiles?.indexOf(this.currentFile)) {
-        const nowPlaying = this.nowPlaying
-        nowPlaying.episodeNumber -= 1
-        const torrent = this.currentFile._torrent
-        this.buildVideo(torrent, { media: nowPlaying, file: this.videoFiles[this.videoFiles.indexOf(this.currentFile) - 1] })
-      } else {
-        this.emit('prev', { file: this.currentFile, filemedia: this.nowPlaying })
+      if (this.videoFiles) { // Ensure videoFiles is not undefined
+        let currentFileIndex = -1;
+        for (let i = 0; i < this.videoFiles.length; i++) {
+          if (this.videoFiles[i].name === this.currentFile.name) {
+            currentFileIndex = i;
+            break;
+          }
+        }
+
+        if (currentFileIndex > 0) {
+          const nowPlaying = this.nowPlaying;
+          if (nowPlaying && nowPlaying.episodeNumber != null) { // Check if nowPlaying and episodeNumber exist before decrementing
+            nowPlaying.episodeNumber -= 1;
+          }
+          const torrent = this.currentFile._torrent;
+          this.buildVideo(torrent, { media: nowPlaying, file: this.videoFiles[currentFileIndex - 1] });
+        } else {
+          this.emit('prev', { file: this.currentFile, filemedia: this.nowPlaying });
+        }
       }
-    }, 200)
+    }, 200);
   }
 
   toggleCast () {
@@ -928,7 +952,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
         })
       }
       // replace all html special tags with normal ones
-      subtitle.text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, '\\h')
+      subtitle.text.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/ /g, '\\h')
     }
     return 'Dialogue: ' +
     (subtitle.layer || 0) + ',' +
