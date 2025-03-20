@@ -358,10 +358,16 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
   async buildVideo (torrent, opts = {}) { // sets video source and creates a bunch of other media stuff
     // play wanted episode from opts, or the 1st episode, or 1st file [batches: plays wanted episode, single: plays the only episode, manually added: plays first or only file]
     this.cleanupVideo()
+
+    // Deselect the previous file if it exists
+    if (this.currentFile && this.currentFile._torrent) { // Make sure currentFile and its torrent exist
+      this.currentFile.deselect() // Deselect the previously playing file
+    }
+
     if (opts.file) {
       this.currentFile = opts.file
     } else if (this.videoFiles.length > 1) {
-      this.currentFile = this.videoFiles.filter(async file => await this.resolveFileMedia({ fileName: file.name }).then(FileMedia => (Number(FileMedia.episodeNumber) === Number(opts.episode || 1)) || (FileMedia === opts.media)))[0] || this.videoFiles[0]
+      this.currentFile = this.videoFiles.find(async file => await this.resolveFileMedia({ fileName: file.name }).then(FileMedia => (Number(FileMedia.episodeNumber) === Number(opts.episode || 1)) || (FileMedia === opts.media))) || this.videoFiles[0]
     } else {
       this.currentFile = this.videoFiles[0]
     }
