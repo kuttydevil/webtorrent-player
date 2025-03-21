@@ -28,11 +28,82 @@ function cancelTimeout (timeout) {
   }
 }
 
+// --- Integration from WebTorrent.js ---
+
+// 1. NUM_PEERS constant
+const NUM_PEERS = 10;
+
+// 2. shouldBlockPredicate function
+const shouldBlockPredicate = (peer) => {
+  if (
+    typeof peer === "object" &&
+    typeof peer.id === "string" &&
+    parsePeerId(peer.id).isLite // Assuming parsePeerId is available or we create a stub for it
+  ) {
+    return true;
+  }
+  return false;
+};
+
+// Stub for parsePeerId (if you don't have it, or remove the lite peer blocking feature if not needed)
+function parsePeerId(peerId) {
+    // Basic stub - replace with actual implementation if you want lite peer blocking
+    return { isLite: false }; // Default to not being a "lite" peer for now
+}
+function generatePeerId() {
+    // Basic stub - replace with actual implementation if you want custom peerId
+    return 'webplayer-' + Math.random().toString(36).substring(7);
+}
+
+
+// --- End Integration from WebTorrent.js ---
+
+
 export default class WebTorrentPlayer extends WebTorrent {
   constructor (options = {}) {
-    super(options.WebTorrentOpts)
+    const webtorrentOptions = { // 3. WebTorrent options from WebTorrent.js
+      peerId: generatePeerId(),
+      shouldBlock:
+        localStorage.getItem("preferences.blockLitePeers") === "true"
+          ? shouldBlockPredicate
+          : undefined,
+      tracker: {
+        getAnnounceOpts: () => ({
+          numwant: NUM_PEERS,
+        }),
+        rtcConfig: {},
+        announceStrategy: {
+          predicate: (infoHash) => {
+            let torrent = WebTorrentPlayer.prototype.client.torrents.filter( // Access client through prototype
+              (t) => t.infoHash === infoHash
+            );
+            if (torrent.length !== 1) {
+              return undefined;
+            }
+            torrent = torrent[0];
+            if (torrent.done) {
+              return undefined;
+            }
+            if (torrent._numConns >= NUM_PEERS) {
+              return false;
+            }
+            return {
+              numwant: NUM_PEERS - torrent._numConns,
+            };
+          },
+          frequency: 10000,
+        },
+        intervalMs: 15 * 60 * 1000, // explicit reannounce interval
+      },
+      dht: false, // explicit disable DHT (only tracker for discovery)
+      lst: false, // explicit disable LST
+    };
+    super({ ...webtorrentOptions, ...options.WebTorrentOpts }); // Merge options, WebTorrent.js options take precedence
 
-    this.storeOpts = options.storeOpts || {}
+    this.storeOpts = options.storeOpts || {};
+
+    // ... (rest of your constructor code remains mostly the same)
+    // ... (adjustments for 'this.client.torrents' if needed - see notes below)
 
     const scope = location.pathname.substr(0, location.pathname.lastIndexOf('/') + 1)
     const worker = location.origin + scope + 'sw.js' === navigator.serviceWorker?.controller?.scriptURL && navigator.serviceWorker.controller
@@ -112,7 +183,7 @@ export default class WebTorrentPlayer extends WebTorrent {
       timeout: undefined,
       defaultHeader: `[V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H000000FF,&H00020713,&H00000000,0,0,0,0,100,100,0,0,1,1.3,0,2,20,20,23,1'}
+Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H000000FF,&H00020713,&H00020713,&H00000000,0,0,0,0,100,100,0,0,1,1.3,0,2,20,20,23,1'}
 [Events]
 
 `
@@ -1225,7 +1296,8 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
         "wss://tracker.openwebtorrent.com",
         "wss://tracker.btorrent.xyz",
         "wss://tracker.novage.com.ua",
-        ]
+        ],
+        ...webtorrentOptions // Apply the new WebTorrent options here as well
       }, torrent => {
         handleTorrent(torrent, opts)
       })
@@ -1252,7 +1324,8 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
         "wss://tracker.openwebtorrent.com",
         "wss://tracker.btorrent.xyz",
         "wss://tracker.novage.com.ua",
-      ]
+      ],
+      ...webtorrentOptions // Apply the new WebTorrent options here as well
     })
     torrent.on('metadata', () => {
       if (!this.offlineTorrents[torrent.infoHash]) {
@@ -1261,5 +1334,10 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
       }
       this.emit('offline-torrent', torrent)
     })
+  }
+
+  dragBarEnd (progressPercent) {
+    this.video.currentTime = this.video.duration * progressPercent / 100 || 0
+    this.playVideo()
   }
 }
