@@ -4,7 +4,61 @@ import { SubtitleParser, SubtitleStream } from 'matroska-subtitles'
 import HybridChunkStore from 'hybrid-chunk-store'
 import SubtitlesOctopus from './lib/subtitles-octopus.js'
 import Peer from './lib/peer.js'
-import { v4 as uuidv4 } from 'uuid'; // For simple PeerID generation
+
+// --- Configuration from store/WebTorrent.js ---
+import { generatePeerId, parsePeerId } from './lib/torrent-utils.js'; // Assuming you have or will create torrent-utils.js with these functions
+
+const shouldBlockPredicate = (peer) => {
+  if (
+    typeof peer === "object" &&
+    typeof peer.id === "string" &&
+    parsePeerId(peer.id).isLite
+  ) {
+    return true;
+  }
+  return false;
+};
+
+const NUM_PEERS = 10;
+const webtorrentConfig = {
+  peerId: generatePeerId(),
+  shouldBlock:
+    localStorage.getItem("preferences.blockLitePeers") === "true"
+      ? shouldBlockPredicate
+      : undefined,
+  tracker: {
+    getAnnounceOpts: () => ({
+      numwant: NUM_PEERS,
+    }),
+    rtcConfig: {},
+    announceStrategy: {
+      predicate: (infoHash) => {
+        let torrent = WebTorrentPlayer.client.torrents.filter( // Use WebTorrentPlayer.client to access the client
+          (t) => t.infoHash === infoHash
+        );
+        if (torrent.length !== 1) {
+          return undefined;
+        }
+        torrent = torrent[0];
+        if (torrent.done) {
+          return undefined;
+        }
+        if (torrent._numConns >= NUM_PEERS) {
+          return false;
+        }
+        return {
+          numwant: NUM_PEERS - torrent._numConns,
+        };
+      },
+      frequency: 10000,
+    },
+    intervalMs: 15 * 60 * 1000, // explicit reannounce interval
+  },
+  dht: false, // explicit disable DHT (only tracker for discovery)
+  lst: false, // explicit disable LST
+};
+
+// --- End of Configuration ---
 
 const units = [' B', ' KB', ' MB', ' GB', ' TB']
 
@@ -29,76 +83,18 @@ function cancelTimeout (timeout) {
   }
 }
 
-// --- New Peer ID Generation and Lite Peer Blocking ---
-function generatePeerId() {
-    return '-WWP-' + uuidv4().replace(/-/g, '').substring(0, 12); // Simple WWP (WebTorrentPlayer) prefix + UUID
-}
-
-function parsePeerId(peerId) {
-    const parsed = {
-        clientPrefix: peerId.substring(0, 5),
-        clientId: peerId.substring(6),
-        isLite: false // In our simplified version, we won't have "lite" peer detection for now
-    };
-    return parsed;
-}
-
-const shouldBlockPredicate = (peer) => {
-  if (
-    typeof peer === "object" &&
-    typeof peer.id === "string" &&
-    parsePeerId(peer.id).isLite // Simplified: always false for now
-  ) {
-    return true;
-  }
-  return false;
-};
-
-const NUM_PEERS = 10;
-
-// --- Updated WebTorrentPlayer Class ---
 export default class WebTorrentPlayer extends WebTorrent {
-  constructor (options = {}) {
-    const webTorrentOptions = { // WebTorrent options from WebTorrent.js
-        peerId: generatePeerId(),
-        shouldBlock:
-          localStorage.getItem("preferences.blockLitePeers") === "true"
-            ? shouldBlockPredicate
-            : undefined,
-        tracker: {
-          getAnnounceOpts: () => ({
-            numwant: NUM_PEERS,
-          }),
-          rtcConfig: {},
-          announceStrategy: {
-            predicate: (infoHash) => {
-              let torrent = this.torrents.filter( 
-                (t) => t.infoHash === infoHash
-              );
-              if (torrent.length !== 1) {
-                return undefined;
-              }
-              torrent = torrent[0];
-              if (torrent.done) {
-                return undefined;
-              }
-              if (torrent._numConns >= NUM_PEERS) {
-                return false;
-              }
-              return {
-                numwant: NUM_PEERS - torrent._numConns,
-              };
-            },
-            frequency: 10000,
-          },
-          intervalMs: 15 * 60 * 1000, // explicit reannounce interval
-        },
-        dht: false, // explicit disable DHT (only tracker for discovery)
-        lst: false, // explicit disable LST
-      };
-    super(webTorrentOptions); // Initialize WebTorrent with enhanced options
+  static client = null; // Static property to hold the WebTorrent client instance
 
-    this.storeOpts = options.storeOpts || {}
+  constructor (options = {}) {
+    const webTorrentOpts = { ...webtorrentConfig, ...options.WebTorrentOpts }; // Merge configs
+    if (!WebTorrentPlayer.client) {
+        WebTorrentPlayer.client = new WebTorrent(webTorrentOpts); // Create client only once
+    }
+    super(WebTorrentPlayer.client._options); // Pass options from existing client
+
+    this.storeOpts = options.storeOpts || {};
+    this.client = WebTorrentPlayer.client; // Assign the shared client instance to this player instance
 
     const scope = location.pathname.substr(0, location.pathname.lastIndexOf('/') + 1)
     const worker = location.origin + scope + 'sw.js' === navigator.serviceWorker?.controller?.scriptURL && navigator.serviceWorker.controller
@@ -304,7 +300,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     this.videoFiles = undefined
 
     this.updateDisplay()
-    this.offlineTorrents = JSON.parse(localStorage.getItem('offlineTorrents')) || {}
+    this.offlineTorrents = JSON.parse(localStorage.getItem('offlineTorrents')) || {};
     // adds all offline store torrents to the client
     Object.values(this.offlineTorrents).forEach(torrentID => this.offlineDownload(new Blob([new Uint8Array(torrentID)])))
 
@@ -419,162 +415,175 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
         }
       }
     })
+  }
 
-    // --- Event Listener Bindings (from Torrent class) ---
+  bindTorrentListeners(torrent) { // Function to bind event listeners
+    const self = this; // Capture 'this' for use inside event handlers
+
     this.onTorrentNoPeers = (method) => {
-      console.log("WebTorrentPlayer Event: noPeers", method);
-      // Analytics would go here in a full implementation
-      this.updateDisplay(); // Keep updating display even with no peers
+      console.trace("webtorrent", { event: "noPeers" });
+      // this.analytics.noPeer(method); // Skip analytics for now
+      this.updateDisplay(); // Keep updateDisplay for UI
     };
 
     this.onTorrentMetadata = async () => {
-      console.log("WebTorrentPlayer Event: metadata");
+      console.trace("webtorrent", { event: "metadata" });
       this.updateDisplay();
+      // load all potential subtitles
       try {
-        await this.loadSubtitles(); // Keep subtitle loading, adapt if needed
+        await this.loadSubtitles();
       } catch (err) {
-        console.error("Error loading subtitles:", err);
+        console.error(err);
       }
     };
     this.onTorrentReady = () => {
-      console.log("WebTorrentPlayer Event: ready");
+      console.trace("webtorrent", { event: "ready" });
       this.updateDisplay();
-      // Analytics would go here
-      // _readyResolver(this); // If you were using Promises for 'ready' state, resolve here
+      // this.analytics.ready(); // Skip analytics for now
+      // this._readyResolver(this); // If you have a ready promise mechanism, keep it
     };
 
     this.onTorrentDownload = (_) => {
-      // Analytics would go here
+      // this.analytics.download(); // Skip analytics for now
       this.updateDisplay();
     };
 
     this.onTorrentDone = () => {
-      console.log("WebTorrentPlayer Event: done - all files downloaded");
-      // Analytics would go here
+      console.trace("webtorrent", { event: "done" });
+      console.info("all files downloaded");
+      // this.analytics.done(); // Skip analytics for now
       this.updateDisplay();
     };
 
     this.onTorrentError = (err) => {
-      console.error(`WebTorrentPlayer Fatal error: ${err}`);
-      // Analytics would go here
+      console.trace("webtorrent", { event: "error", error: err });
+      console.error(`fatal error ${err}`);
+      // this.analytics.error(err); // Skip analytics for now
       this.updateDisplay();
     };
 
     this.onTorrentPeerCreate = (peerId) => {
-      console.log("WebTorrentPlayer Event: peerCreate", peerId);
-      // State management for peers - adapt if you need to track peers in UI
+      console.trace("webtorrent", { event: "peerCreate", peerId });
+      // this.context.commit( // Skip Vuex commit for now
+      //   "library/setPeer",
+      //   { infoHash: this.infoHash, peerId, wire: null },
+      //   { root: true }
+      // );
     };
     this.onTorrentWire = (wire) => {
-      console.log("WebTorrentPlayer Event: wire", wire.peerId);
-      // Analytics would go here
+      console.trace("webtorrent", {
+        event: "wire",
+        infoHash: torrent.infoHash, // Use torrent.infoHash here
+        peerId: wire.peerId,
+      });
+      // this.context.commit( // Skip Vuex commit for now
+      //   "library/setPeer",
+      //   { infoHash: this.infoHash, peerId: wire.peerId, wire },
+      //   { root: true }
+      // );
+      // this.analytics.wire(); // Skip analytics for now
       this.updateDisplay();
-      // State management for wire - adapt if needed
     };
     this.onTorrentPeerConnect = (peerId, wire) => {
-      console.log("WebTorrentPlayer Event: peerConnect", peerId);
-      // Analytics would go here
-      // State management for peers - adapt if you need to track peers in UI
+      console.trace("webtorrent", {
+        event: "peerConnect",
+        infoHash: torrent.infoHash,  // Use torrent.infoHash here
+        peerId,
+      });
+      // this.analytics.peerConnect(); // Skip analytics for now
+      // this.context.commit( // Skip Vuex commit for now
+      //   "library/setPeer",
+      //   { infoHash: this.infoHash, peerId, wire },
+      //   { root: true }
+      // );
     };
 
     this.onTorrentPeerDestroy = (peerId, err) => {
-      console.log("WebTorrentPlayer Event: peerDestroy", peerId, err);
-      // Analytics would go here
-      // State management for peers - adapt if you need to track peers in UI
+      console.trace("webtorrent", { event: "peerDestroy", peerId, error: err });
+      // this.analytics.peerDestroy(); // Skip analytics for now
+      // this.context.commit( // Skip Vuex commit for now
+      //   "library/setPeer",
+      //   { infoHash: this.infoHash, peerId, wire: undefined },
+      //   { root: true }
+      // );
     };
     this.onTorrentDiscoveryStarted = () => {
-      console.log("WebTorrentPlayer Event: discoveryStarted");
-      // Tracker specific events - adapt if you need to track tracker status in UI
+      console.trace("webtorrent", { event: "discoveryStarted" });
+      if (torrent.discovery && torrent.discovery.tracker && torrent.discovery.tracker._trackers) { // Check if discovery and trackers are available
+        for (let tracker of torrent.discovery.tracker._trackers) {
+          // this.context.commit( // Skip Vuex commit for now
+          //   "library/setTracker",
+          //   {
+          //     infoHash: this.infoHash,
+          //     tracker: tracker.announceUrl,
+          //     socket: null,
+          //   },
+          //   { root: true }
+          // );
+          tracker.addListener("socketConnect", (socket) => {
+            console.trace("webtorrent", {
+              event: "socketConnect",
+              tracker: tracker.announceUrl,
+              infoHash: torrent.infoHash, // Use torrent.infoHash here
+              socketUrl: socket.url,
+            });
+            // this.context.commit( // Skip Vuex commit for now
+            //   "library/setTracker",
+            //   { infoHash: this.infoHash, tracker: tracker.announceUrl, socket },
+            //   { root: true }
+            // );
+          });
+          tracker.addListener("socketClose", () => {
+            console.trace("webtorrent", {
+              event: "socketClose",
+              tracker: tracker.announceUrl,
+              infoHash: torrent.infoHash, // Use torrent.infoHash here
+            });
+            // this.context.commit( // Skip Vuex commit for now
+            //   "library/setTracker",
+            //   {
+            //     infoHash: this.infoHash,
+            //     tracker: tracker.announceUrl,
+            //     socket: undefined,
+            //   },
+            //   { root: true }
+            // );
+          });
+          tracker.addListener("socketError", () => {
+            console.trace("webtorrent", {
+              event: "socketError",
+              tracker: tracker.announceUrl,
+              infoHash: torrent.infoHash, // Use torrent.infoHash here
+            });
+            // this.context.commit( // Skip Vuex commit for now
+            //   "library/setTracker",
+            //   {
+            //     infoHash: this.infoHash,
+            //     tracker: tracker.announceUrl,
+            //     socket: undefined,
+            //   },
+            //   { root: true }
+            // );
+          });
+        }
+      }
     };
+
+    torrent.addListener("peerConnect", this.onTorrentPeerConnect);
+    torrent.addListener("peerCreate", this.onTorrentPeerCreate);
+    torrent.addListener("peerDestroy", this.onTorrentPeerDestroy);
+    torrent.addListener("nopeers", this.onTorrentNoPeers);
+    torrent.addListener("wire", this.onTorrentWire);
+    torrent.addListener("metadata", this.onTorrentMetadata);
+    torrent.addListener("download", this.onTorrentDownload);
+    torrent.addListener("done", this.onTorrentDone);
+    torrent.addListener("error", this.onTorrentError);
+    torrent.addListener(
+      "discoveryStarted",
+      this.onTorrentDiscoveryStarted
+    );
   }
 
-  playTorrent (torrentID, opts = {}) { // TODO: clean this up
-    const handleTorrent = (torrent, opts) => {
-      // --- Bind Event Listeners for the Torrent ---
-      torrent.on('noPeers', this.onTorrentNoPeers);
-      torrent.on('metadata', this.onTorrentMetadata);
-      torrent.on('ready', this.onTorrentReady);
-      torrent.on('download', this.onTorrentDownload);
-      torrent.on('done', this.onTorrentDone);
-      torrent.on('error', this.onTorrentError);
-      torrent.on('peerCreate', this.onTorrentPeerCreate);
-      torrent.on('wire', this.onTorrentWire);
-      torrent.on('peerConnect', this.onTorrentPeerConnect);
-      torrent.on('peerDestroy', this.onTorrentPeerDestroy);
-      torrent.on('discoveryStarted', this.onTorrentDiscoveryStarted);
-
-      torrent.on('noPeers', () => {
-        this.emit('no-peers', torrent)
-      })
-      if (this.streamedDownload) {
-        torrent.files.forEach(file => file.deselect())
-        torrent.deselect(0, torrent.pieces.length - 1, false)
-      }
-      this.videoFiles = torrent.files.filter(file => this.videoExtensions.some(ext => file.name.endsWith(ext)))
-      this.emit('video-files', { files: this.videoFiles, torrent: torrent })
-      if (this.videoFiles.length > 1) {
-        torrent.files.forEach(file => file.deselect())
-      }
-      if (this.videoFiles) {
-        this.buildVideo(torrent, opts)
-      } else {
-        this.emit('no-file', torrent)
-        this.cleanupTorrents()
-      }
-    }
-    document.location.hash = '#player'
-    this.cleanupVideo()
-    this.cleanupTorrents()
-    if (torrentID instanceof Object) {
-      handleTorrent(torrentID, opts)
-    } else if (this.get(torrentID)) {
-      handleTorrent(this.get(torrentID), opts)
-    } else {
-      this.add(torrentID, {
-        destroyStoreOnDestroy: this.destroyStore,
-        storeOpts: this.storeOpts,
-        storeCacheSlots: 0,
-        store: HybridChunkStore,
-        announce: this.tracker.announce || [
-          "wss://tracker.btorrent.xyz",
-        "wss://tracker.openwebtorrent.com",
-        "wss://wstracker.online",
-        "wss://asdxwqw.com",
-        "wss://tracker.openwebtorrent.com",
-        "wss://tracker.btorrent.xyz",
-        "wss://tracker.novage.com.ua",
-        ]
-      }, torrent => {
-        handleTorrent(torrent, opts)
-      })
-    }
-  }
-
-  destroy () { // Updated destroy to remove listeners
-    this.removeTorrentListeners(); // Call remove listeners on current torrent before destroying client
-    super.destroy()
-    if (this.destroyStore) this.destroyStoreFn()
-    this.torrents = []
-    localStorage.removeItem('offlineTorrents')
-  }
-
-  removeTorrentListeners() { // New function to remove torrent listeners
-    if (this.currentFile && this.currentFile._torrent) {
-      const torrent = this.currentFile._torrent;
-      torrent.removeListener('noPeers', this.onTorrentNoPeers);
-      torrent.removeListener('metadata', this.onTorrentMetadata);
-      torrent.removeListener('ready', this.onTorrentReady);
-      torrent.removeListener('download', this.onTorrentDownload);
-      torrent.removeListener('done', this.onTorrentDone);
-      torrent.removeListener('error', this.onTorrentError);
-      torrent.removeListener('peerCreate', this.onTorrentPeerCreate);
-      torrent.removeListener('wire', this.onTorrentWire);
-      torrent.removeListener('peerConnect', this.onTorrentPeerConnect);
-      torrent.removeListener('peerDestroy', this.onTorrentPeerDestroy);
-      torrent.removeListener('discoveryStarted', this.onTorrentDiscoveryStarted);
-    }
-  }
-
-  // --- buildVideo function (with deselect and parser) ---
   async buildVideo (torrent, opts = {}) { // sets video source and creates a bunch of other media stuff
     // play wanted episode from opts, or the 1st episode, or 1st file [batches: plays wanted episode, single: plays the only episode, manually added: plays first or only file]
     this.cleanupVideo()
@@ -651,13 +660,6 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     }
   }
 
-  // --- dragBarEnd (with playVideo) ---
-  dragBarEnd (progressPercent) {
-    this.video.currentTime = this.video.duration * progressPercent / 100 || 0
-    this.playVideo()
-  }
-
-  // --- Rest of your existing methods (cleanupVideo, playPause, setVolume, etc.) ---
   cleanupVideo () { // cleans up objects, attemps to clear as much video caching as possible
     this.presentationConnection?.terminate()
     if (document.pictureInPictureElement) document.exitPictureInPicture()
@@ -848,7 +850,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
 
     this.presentationConnection.addEventListener('message', ({ data }) => {
       peer.signalingPort.postMessage(data)
-    })
+    }
 
     peer.dc.onopen = async () => {
       await this.fps
@@ -1084,6 +1086,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     this.thumbnailData.video.play()
     console.log('Thumbnail creating started')
   }
+
 
   dragBarEnd (progressPercent) {
     this.video.currentTime = this.video.duration * progressPercent / 100 || 0
@@ -1410,21 +1413,8 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     })
   }
 
-  playTorrent (torrentID, opts = {}) { // TODO: clean this up
+  playTorrent (torrentID, opts = {}) {
     const handleTorrent = (torrent, opts) => {
-      // --- Bind Event Listeners for the Torrent ---
-      torrent.on('noPeers', this.onTorrentNoPeers);
-      torrent.on('metadata', this.onTorrentMetadata);
-      torrent.on('ready', this.onTorrentReady);
-      torrent.on('download', this.onTorrentDownload);
-      torrent.on('done', this.onTorrentDone);
-      torrent.on('error', this.onTorrentError);
-      torrent.on('peerCreate', this.onTorrentPeerCreate);
-      torrent.on('wire', this.onTorrentWire);
-      torrent.on('peerConnect', this.onTorrentPeerConnect);
-      torrent.on('peerDestroy', this.onTorrentPeerDestroy);
-      torrent.on('discoveryStarted', this.onTorrentDiscoveryStarted);
-
       torrent.on('noPeers', () => {
         this.emit('no-peers', torrent)
       })
@@ -1438,6 +1428,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
         torrent.files.forEach(file => file.deselect())
       }
       if (this.videoFiles) {
+        this.bindTorrentListeners(torrent); // Bind listeners here after torrent is added
         this.buildVideo(torrent, opts)
       } else {
         this.emit('no-file', torrent)
@@ -1449,10 +1440,10 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     this.cleanupTorrents()
     if (torrentID instanceof Object) {
       handleTorrent(torrentID, opts)
-    } else if (this.get(torrentID)) {
-      handleTorrent(this.get(torrentID), opts)
+    } else if (this.client.get(torrentID)) { // Use this.client.get
+      handleTorrent(this.client.get(torrentID), opts) // Use this.client.get
     } else {
-      this.add(torrentID, {
+      this.client.add(torrentID, { // Use this.client.add
         destroyStoreOnDestroy: this.destroyStore,
         storeOpts: this.storeOpts,
         storeCacheSlots: 0,
@@ -1475,12 +1466,12 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
   // cleanup torrent and store
   cleanupTorrents () {
   // creates an array of all non-offline store torrents and removes them
-    this.torrents.filter(torrent => !this.offlineTorrents[torrent.infoHash]).forEach(torrent => torrent.destroy())
+    this.client.torrents.filter(torrent => !this.offlineTorrents[torrent.infoHash]).forEach(torrent => torrent.destroy()) // Use this.client.torrents
   }
 
   // add torrent for offline download
   offlineDownload (torrentID) {
-    const torrent = this.add(torrentID, {
+    const torrent = this.client.add(torrentID, { // Use this.client.add
       storeOpts: this.storeOpts,
       store: HybridChunkStore,
       storeCacheSlots: 0,
