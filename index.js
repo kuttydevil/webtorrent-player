@@ -30,10 +30,15 @@ function cancelTimeout (timeout) {
 
 export default class WebTorrentPlayer extends WebTorrent {
   constructor (options = {}) {
-    super({ // WebTorrent Options - Explicitly set DHT and PEX, and a torrentPort
+    super({ // WebTorrent Options - Explicitly set DHT, PEX, torrentPort, and adjust tracker options
       dht: true,
       pex: true,
-      torrentPort: 6881, // Common port for torrents, good for port forwarding if user sets it up
+      torrentPort: 6881, // Common port for torrents
+      tracker: {         // Tracker options -  Increased timeout, and more aggressive announce interval (adjust with caution)
+        timeout: 15000,  // Increased tracker request timeout (milliseconds) - Adjust if needed
+        interval: 15000, // Set announce interval (milliseconds) - WebTorrent usually manages this, adjust with caution
+        // allowHalfOpen: true // Experiment with this if needed, might help in some NAT situations (less common now)
+      },
       ...options.WebTorrentOpts // Spread any user-provided options to override if needed
     })
 
@@ -819,85 +824,6 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     this.controls.thumbnail.style.setProperty('height', height + 'px')
   }
 
-  createThumbnail (video) {
-    if (video?.readyState >= 2) {
-      const index = Math.floor(video.currentTime / this.thumbnailData.interval)
-      if (!this.thumbnailData.thumbnails[index]) {
-        this.thumbnailData.context.fillRect(0, 0, 150, this.thumbnailData.canvas.height)
-        this.thumbnailData.context.drawImage(video, 0, 0, 150, this.thumbnailData.canvas.height)
-        this.thumbnailData.thumbnails[index] = this.thumbnailData.canvas.toDataURL('image/jpeg')
-      }
-    }
-  }
-
-  finishThumbnails (src) {
-    const t0 = performance.now()
-    const video = document.createElement('video')
-    let index = 0
-    video.preload = 'none'
-    video.volume = 0
-    video.playbackRate = 0
-    video.addEventListener('loadeddata', () => loadTime())
-    video.addEventListener('canplay', () => {
-      this.createThumbnail(this.thumbnailData.video)
-      loadTime()
-    })
-    this.thumbnailData.video = video
-    const loadTime = () => {
-      while (this.thumbnailData.thumbnails[index] && index <= Math.floor(this.thumbnailData.video.duration / this.thumbnailData.interval)) { // only create thumbnails that are missing
-        index++
-      }
-      if (this.thumbnailData.video?.currentTime !== this.thumbnailData.video?.duration) {
-        this.thumbnailData.video.currentTime = index * this.thumbnailData.interval
-      } else {
-        this.thumbnailData.video?.removeAttribute('src')
-        this.thumbnailData.video?.load()
-        this.thumbnailData.video?.remove()
-        delete this.thumbnailData.video
-        console.log('Thumbnail creating finished', index, this.toTS((performance.now() - t0) / 1000))
-      }
-      index++
-    }
-    this.thumbnailData.video.src = src
-    this.thumbnailData.video.play()
-    console.log('Thumbnail creating started')
-  }
-
-  dragBarEnd (progressPercent) {
-    this.video.currentTime = this.video.duration * progressPercent / 100 || 0
-    this.playVideo()
-  }
-
-  dragBarStart (progressPercent) {
-    this.video.pause()
-    this.setProgress(progressPercent)
-  }
-
-  setProgress (progressPercent) {
-    progressPercent = progressPercent || 0
-    const currentTime = this.video.duration * progressPercent / 100 || 0
-    if (this.controls.progressWrapper) this.controls.progressWrapper.style.setProperty('--progress', progressPercent + '%')
-    if (this.controls.thumbnail) this.controls.thumbnail.src = this.thumbnailData.thumbnails[Math.floor(currentTime / this.thumbnailData.interval)] || ' '
-    if (this.controls.setProgress) {
-      this.controls.setProgress.dataset.elapsed = this.toTS(currentTime)
-      this.controls.setProgress.value = progressPercent
-    }
-    if (this.controls.progressWrapper) {
-      this.controls.progressWrapper.dataset.elapsed = this.toTS(currentTime)
-      this.controls.progressWrapper.dataset.remaining = this.toTS(this.video.duration - currentTime)
-    }
-  }
-
-  updateDisplay () {
-    if (this.currentFile && this.currentFile._torrent) {
-      if (this.player) this.player.style.setProperty('--download', this.currentFile.progress * 100 + '%')
-      if (this.controls.peers) this.controls.peers.dataset.value = this.currentFile._torrent.numPeers
-      if (this.controls.downSpeed) this.controls.downSpeed.dataset.value = this.prettyBytes(this.currentFile._torrent.downloadSpeed) + '/s'
-      if (this.controls.upSpeed) this.controls.upSpeed.dataset.value = this.prettyBytes(this.currentFile._torrent.uploadSpeed) + '/s'
-    }
-    setTimeout(() => requestAnimationFrame(() => this.updateDisplay()), 200)
-  }
-
   createRadioElement (track, type) {
     // type: captions audio
     if ((type === 'captions' && this.controls.selectCaptions && this.controls.captionsButton) || (type === 'audio' && this.controls.selectAudio)) {
@@ -1189,8 +1115,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
   }
 
   playTorrent (torrentID, opts = {}) { // TODO: clean this up
-    const announceList = [ // Comprehensive list of public trackers (May need updates over time)
-      // WebSockets (ws://, wss://) - Preferred for browsers
+    const announceList = [ 
       "wss://tracker.btorrent.xyz",
       "wss://tracker.openwebtorrent.com",
       "wss://wstracker.online",
@@ -1200,8 +1125,6 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
       "wss://tube.privacy.services:443/announce",
       "wss://tracker.publicbt.com",
       "wss://tracker.opentrackr.org:443/announce",
-
-      // HTTP (http://, https://) - Fallback, may be less efficient in browsers but good to include
       "https://tracker.ngosang.net:443/announce",
       "https://tracker.opentrackr.org:443/announce",
       "https://opentracker.i2p.rocks:443/announce",
@@ -1243,6 +1166,21 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
       torrent.on('noPeers', () => {
         this.emit('no-peers', torrent)
       })
+
+      // **ADDITIONAL LOGGING - Tracker Announce Events**
+      torrent.on('trackerAnnounce', function (trackerUrl) {
+        console.log('Tracker announce sent to:', trackerUrl) // Log when announce is sent
+      })
+      torrent.on('trackerWarning', function (trackerUrl, err) {
+        console.warn('Tracker warning from:', trackerUrl, err) // Log tracker warnings
+      })
+      torrent.on('trackerError', function (trackerUrl, err) {
+        console.error('Tracker error from:', trackerUrl, trackerUrl, err) // Log tracker errors
+      })
+      torrent.on('peer', function (peer, addr) {
+        console.log('Found peer:', addr) // Log when a new peer is found
+      })
+
       if (this.streamedDownload) {
         torrent.files.forEach(file => file.deselect())
         torrent.deselect(0, torrent.pieces.length - 1, false)
@@ -1287,7 +1225,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
 
   // add torrent for offline download
   offlineDownload (torrentID) {
-    const announceList = [ // Reusing tracker list for offline downloads as well
+    const announceList = [ 
       "wss://tracker.btorrent.xyz",
       "wss://tracker.openwebtorrent.com",
       "wss://wstracker.online",
