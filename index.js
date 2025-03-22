@@ -31,9 +31,13 @@ function cancelTimeout (timeout) {
 export default class WebTorrentPlayer extends WebTorrent {
   constructor (options = {}) {
     super({
-      ...options.WebTorrentOpts, // Keep any other WebTorrent options
-      dht: true,              // Explicitly enable DHT
-      pex: true               // Explicitly enable PEX
+      ...options.WebTorrentOpts,
+      // Explicitly enable DHT and PEX for better peer discovery
+      dht: options.WebTorrentOpts?.dht !== undefined ? options.WebTorrentOpts.dht : true,
+      pex: options.WebTorrentOpts?.pex !== undefined ? options.WebTorrentOpts.pex : true,
+      // Consider setting a specific torrentPort and configuring port forwarding in your router
+      // for improved incoming connections (less necessary for web clients, but can help).
+      // torrentPort: 6881,
     })
 
     this.storeOpts = options.storeOpts || {}
@@ -666,7 +670,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
               canvasVideo.play()
               canvasVideo.requestPictureInPicture().then(
                 this.player.classList.add('pip')
-              ).catch(e) => {
+              ).catch(e => {
                 console.warn('Failed To Burn In Subtitles ' + e)
                 destroy()
                 canvasVideo.remove()
@@ -1211,31 +1215,37 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     document.location.hash = '#player'
     this.cleanupVideo()
     this.cleanupTorrents()
-
-    const torrentOptions = { // Options for client.add()
-      destroyStoreOnDestroy: this.destroyStore,
-      storeOpts: this.storeOpts,
-      storeCacheSlots: 0,
-      store: HybridChunkStore,
-      announce: this.tracker.announce || [
-        "wss://tracker.btorrent.xyz",
-        "wss://tracker.openwebtorrent.com",
-        "wss://wstracker.online",
-        "wss://asdxwqw.com",
-        "wss://tracker.openwebtorrent.com",
-        "wss://tracker.btorrent.xyz",
-        "wss://tracker.novage.com.ua",
-      ],
-      webSeeds: opts.webSeeds || [] // Add webSeeds from opts, if provided
-    };
-
-
     if (torrentID instanceof Object) {
       handleTorrent(torrentID, opts)
     } else if (this.get(torrentID)) {
       handleTorrent(this.get(torrentID), opts)
     } else {
-      this.add(torrentID, torrentOptions, torrent => {
+      this.add(torrentID, {
+        destroyStoreOnDestroy: this.destroyStore,
+        storeOpts: this.storeOpts,
+        storeCacheSlots: 0,
+        store: HybridChunkStore,
+        announce: [ // Comprehensive list of public trackers (update periodically)
+          "wss://tracker.btorrent.xyz",
+          "wss://tracker.openwebtorrent.com",
+          "wss://wstracker.online",
+          "wss://asdxwqw.com",
+          "wss://tracker.torrent.eu.org",
+          "wss://tracker.fastcast.nz",
+          "wss://tracker.publicbt.com",
+          "wss://tracker.opentrackr.org",
+          "wss://udp-tracker.net:443/announce",
+          "wss://open.stealth.si:443/announce",
+          "wss://tracker.leechers-paradise.org:443/announce",
+          "wss://bttracker.debian.org:443/announce",
+          "wss://explodie.org:8443/announce",
+          "wss://ipv4.tracker.harry.lu:80/announce",
+          "wss://retracker.lanta-net.ru/announce",
+          "wss://tracker.monitor.uwu.mx:443/announce"
+          // Add more from public lists, but be mindful of tracker load
+        ],
+        // Reminder: Check your firewall/antivirus to ensure it's not blocking WebTorrent
+      }, torrent => {
         handleTorrent(torrent, opts)
       })
     }
@@ -1253,14 +1263,23 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
       storeOpts: this.storeOpts,
       store: HybridChunkStore,
       storeCacheSlots: 0,
-      announce: this.tracker.announce || [
+      announce: [ // Using the same comprehensive tracker list for offline downloads too
         "wss://tracker.btorrent.xyz",
         "wss://tracker.openwebtorrent.com",
         "wss://wstracker.online",
         "wss://asdxwqw.com",
-        "wss://tracker.openwebtorrent.com",
-        "wss://tracker.btorrent.xyz",
-        "wss://tracker.novage.com.ua",
+        "wss://tracker.torrent.eu.org",
+        "wss://tracker.fastcast.nz",
+        "wss://tracker.publicbt.com",
+        "wss://tracker.opentrackr.org",
+        "wss://udp-tracker.net:443/announce",
+        "wss://open.stealth.si:443/announce",
+        "wss://tracker.leechers-paradise.org:443/announce",
+        "wss://bttracker.debian.org:443/announce",
+        "wss://explodie.org:8443/announce",
+        "wss://ipv4.tracker.harry.lu:80/announce",
+        "wss://retracker.lanta-net.ru/announce",
+        "wss://tracker.monitor.uwu.mx:443/announce"
       ]
     })
     torrent.on('metadata', () => {
