@@ -31,8 +31,6 @@ function cancelTimeout (timeout) {
 export default class WebTorrentPlayer extends WebTorrent {
   constructor (options = {}) {
     super(options.WebTorrentOpts)
-    webSeeds: true // Ensure Web Seeds are enabled
-  })
 
     this.storeOpts = options.storeOpts || {}
 
