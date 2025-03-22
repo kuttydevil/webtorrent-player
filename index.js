@@ -30,14 +30,11 @@ function cancelTimeout (timeout) {
 
 export default class WebTorrentPlayer extends WebTorrent {
   constructor (options = {}) {
-    super({
-      ...options.WebTorrentOpts,
-      // Explicitly enable DHT and PEX for better peer discovery
-      dht: options.WebTorrentOpts?.dht !== undefined ? options.WebTorrentOpts.dht : true,
-      pex: options.WebTorrentOpts?.pex !== undefined ? options.WebTorrentOpts.pex : true,
-      // Consider setting a specific torrentPort and configuring port forwarding in your router
-      // for improved incoming connections (less necessary for web clients, but can help).
-      // torrentPort: 6881,
+    super({ // WebTorrent Options - Explicitly set DHT and PEX, and a torrentPort
+      dht: true,
+      pex: true,
+      torrentPort: 6881, // Common port for torrents, good for port forwarding if user sets it up
+      ...options.WebTorrentOpts // Spread any user-provided options to override if needed
     })
 
     this.storeOpts = options.storeOpts || {}
@@ -1192,6 +1189,56 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
   }
 
   playTorrent (torrentID, opts = {}) { // TODO: clean this up
+    const announceList = [ // Comprehensive list of public trackers (May need updates over time)
+      // WebSockets (ws://, wss://) - Preferred for browsers
+      "wss://tracker.btorrent.xyz",
+      "wss://tracker.openwebtorrent.com",
+      "wss://wstracker.online",
+      "wss://asdxwqw.com",
+      "wss://tracker.torrent.eu.org",
+      "wss://tracker.fastcast.nz",
+      "wss://tube.privacy.services:443/announce",
+      "wss://tracker.publicbt.com",
+      "wss://tracker.opentrackr.org:443/announce",
+
+      // HTTP (http://, https://) - Fallback, may be less efficient in browsers but good to include
+      "https://tracker.ngosang.net:443/announce",
+      "https://tracker.opentrackr.org:443/announce",
+      "https://opentracker.i2p.rocks:443/announce",
+      "https://tracker.openbittorrent.com:443/announce",
+      "https://tr.溯洄.top:443/announce",
+      "http://tracker.openbittorrent.com:80/announce",
+      "http://tracker. পাবলিক.তোমাকে.net:80/announce",
+      "http://tracker.mg64.net:6969/announce",
+      "http://tracker.monitor.uw.edu.pl:6969/announce",
+      "http://tracker.files.fm:6969/announce",
+      "http://retracker.telecom.by:80/announce",
+      "http://open.acgnxtracker.com:80/announce",
+      "http://bttracker.сип.рф:80/announce",
+      "http://tracker.ваниль.pw:80/announce",
+      "http://tracker.electro-torrent.pl:80/announce",
+      "http://tracker.dler.org:6969/announce",
+      "http://tracker.skyts.net:6969/announce",
+      "http://exodus.desync.com:6969/announce",
+      "http://bigfoot1945.se:6969/announce",
+      "http://retracker.lanta-net.ru:80/announce",
+      "http://tracker.tiny-vps.com:6969/announce",
+      "udp://tracker.opentrackr.org:1337/announce",
+      "udp://tracker.openbittorrent.com:80",
+      "udp://tracker.coppersurfer.tk:6969",
+      "udp://tracker.leechers-paradise.org:6969",
+      "udp://tracker.zer0day.to:1337",
+      "udp://explodie.org:6969",
+      "udp://tracker.torrent.eu.org:451/announce",
+      "udp://9.rarbg.me:2710/announce",
+      "udp://9.rarbg.to:2710/announce",
+      "udp://tracker.0x.tf:1337/announce",
+      "udp://tracker.dler.org:6969/announce",
+      "udp://open.stealth.si:8000/announce",
+      "udp://opentracker.i2p.rocks:6969/announce",
+      "udp://tracker.opentrackr.org:1337/announce",
+    ];
+
     const handleTorrent = (torrent, opts) => {
       torrent.on('noPeers', () => {
         this.emit('no-peers', torrent)
@@ -1225,26 +1272,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
         storeOpts: this.storeOpts,
         storeCacheSlots: 0,
         store: HybridChunkStore,
-        announce: [ // Comprehensive list of public trackers (update periodically)
-          "wss://tracker.btorrent.xyz",
-          "wss://tracker.openwebtorrent.com",
-          "wss://wstracker.online",
-          "wss://asdxwqw.com",
-          "wss://tracker.torrent.eu.org",
-          "wss://tracker.fastcast.nz",
-          "wss://tracker.publicbt.com",
-          "wss://tracker.opentrackr.org",
-          "wss://udp-tracker.net:443/announce",
-          "wss://open.stealth.si:443/announce",
-          "wss://tracker.leechers-paradise.org:443/announce",
-          "wss://bttracker.debian.org:443/announce",
-          "wss://explodie.org:8443/announce",
-          "wss://ipv4.tracker.harry.lu:80/announce",
-          "wss://retracker.lanta-net.ru/announce",
-          "wss://tracker.monitor.uwu.mx:443/announce"
-          // Add more from public lists, but be mindful of tracker load
-        ],
-        // Reminder: Check your firewall/antivirus to ensure it's not blocking WebTorrent
+        announce: announceList, // Use the comprehensive tracker list here
       }, torrent => {
         handleTorrent(torrent, opts)
       })
@@ -1259,28 +1287,57 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
 
   // add torrent for offline download
   offlineDownload (torrentID) {
+    const announceList = [ // Reusing tracker list for offline downloads as well
+      "wss://tracker.btorrent.xyz",
+      "wss://tracker.openwebtorrent.com",
+      "wss://wstracker.online",
+      "wss://asdxwqw.com",
+      "wss://tracker.torrent.eu.org",
+      "wss://tracker.fastcast.nz",
+      "wss://tube.privacy.services:443/announce",
+      "wss://tracker.publicbt.com",
+      "wss://tracker.opentrackr.org:443/announce",
+      "https://tracker.ngosang.net:443/announce",
+      "https://tracker.opentrackr.org:443/announce",
+      "https://opentracker.i2p.rocks:443/announce",
+      "https://tracker.openbittorrent.com:443/announce",
+      "https://tr.溯洄.top:443/announce",
+      "http://tracker.openbittorrent.com:80/announce",
+      "http://tracker. পাবলিক.তোমাকে.net:80/announce",
+      "http://tracker.mg64.net:6969/announce",
+      "http://tracker.monitor.uw.edu.pl:6969/announce",
+      "http://tracker.files.fm:6969/announce",
+      "http://retracker.telecom.by:80/announce",
+      "http://open.acgnxtracker.com:80/announce",
+      "http://bttracker.сип.рф:80/announce",
+      "http://tracker.ваниль.pw:80/announce",
+      "http://tracker.electro-torrent.pl:80/announce",
+      "http://tracker.dler.org:6969/announce",
+      "http://tracker.skyts.net:6969/announce",
+      "http://exodus.desync.com:6969/announce",
+      "http://bigfoot1945.se:6969/announce",
+      "http://retracker.lanta-net.ru:80/announce",
+      "http://tracker.tiny-vps.com:6969/announce",
+      "udp://tracker.opentrackr.org:1337/announce",
+      "udp://tracker.openbittorrent.com:80",
+      "udp://tracker.coppersurfer.tk:6969",
+      "udp://tracker.leechers-paradise.org:6969",
+      "udp://tracker.zer0day.to:1337",
+      "udp://explodie.org:6969",
+      "udp://tracker.torrent.eu.org:451/announce",
+      "udp://9.rarbg.me:2710/announce",
+      "udp://9.rarbg.to:2710/announce",
+      "udp://tracker.0x.tf:1337/announce",
+      "udp://tracker.dler.org:6969/announce",
+      "udp://open.stealth.si:8000/announce",
+      "udp://opentracker.i2p.rocks:6969/announce",
+      "udp://tracker.opentrackr.org:1337/announce",
+    ];
     const torrent = this.add(torrentID, {
       storeOpts: this.storeOpts,
       store: HybridChunkStore,
       storeCacheSlots: 0,
-      announce: [ // Using the same comprehensive tracker list for offline downloads too
-        "wss://tracker.btorrent.xyz",
-        "wss://tracker.openwebtorrent.com",
-        "wss://wstracker.online",
-        "wss://asdxwqw.com",
-        "wss://tracker.torrent.eu.org",
-        "wss://tracker.fastcast.nz",
-        "wss://tracker.publicbt.com",
-        "wss://tracker.opentrackr.org",
-        "wss://udp-tracker.net:443/announce",
-        "wss://open.stealth.si:443/announce",
-        "wss://tracker.leechers-paradise.org:443/announce",
-        "wss://bttracker.debian.org:443/announce",
-        "wss://explodie.org:8443/announce",
-        "wss://ipv4.tracker.harry.lu:80/announce",
-        "wss://retracker.lanta-net.ru/announce",
-        "wss://tracker.monitor.uwu.mx:443/announce"
-      ]
+      announce: announceList, // Use tracker list for offline download too
     })
     torrent.on('metadata', () => {
       if (!this.offlineTorrents[torrent.infoHash]) {
