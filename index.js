@@ -30,7 +30,11 @@ function cancelTimeout (timeout) {
 
 export default class WebTorrentPlayer extends WebTorrent {
   constructor (options = {}) {
-    super(options.WebTorrentOpts)
+    super({
+      ...options.WebTorrentOpts, // Keep any other WebTorrent options
+      dht: true,              // Explicitly enable DHT
+      pex: true               // Explicitly enable PEX
+    })
 
     this.storeOpts = options.storeOpts || {}
 
@@ -662,7 +666,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
               canvasVideo.play()
               canvasVideo.requestPictureInPicture().then(
                 this.player.classList.add('pip')
-              ).catch(e => {
+              ).catch(e) => {
                 console.warn('Failed To Burn In Subtitles ' + e)
                 destroy()
                 canvasVideo.remove()
@@ -1207,26 +1211,31 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     document.location.hash = '#player'
     this.cleanupVideo()
     this.cleanupTorrents()
-    if (torrentID instanceof Object) {
-      handleTorrent(torrentID, opts)
-    } else if (this.get(torrentID)) {
-      handleTorrent(this.get(torrentID), opts)
-    } else {
-      this.add(torrentID, {
-        destroyStoreOnDestroy: this.destroyStore,
-        storeOpts: this.storeOpts,
-        storeCacheSlots: 0,
-        store: HybridChunkStore,
-        announce: this.tracker.announce || [
-          "wss://tracker.btorrent.xyz",
+
+    const torrentOptions = { // Options for client.add()
+      destroyStoreOnDestroy: this.destroyStore,
+      storeOpts: this.storeOpts,
+      storeCacheSlots: 0,
+      store: HybridChunkStore,
+      announce: this.tracker.announce || [
+        "wss://tracker.btorrent.xyz",
         "wss://tracker.openwebtorrent.com",
         "wss://wstracker.online",
         "wss://asdxwqw.com",
         "wss://tracker.openwebtorrent.com",
         "wss://tracker.btorrent.xyz",
         "wss://tracker.novage.com.ua",
-        ]
-      }, torrent => {
+      ],
+      webSeeds: opts.webSeeds || [] // Add webSeeds from opts, if provided
+    };
+
+
+    if (torrentID instanceof Object) {
+      handleTorrent(torrentID, opts)
+    } else if (this.get(torrentID)) {
+      handleTorrent(this.get(torrentID), opts)
+    } else {
+      this.add(torrentID, torrentOptions, torrent => {
         handleTorrent(torrent, opts)
       })
     }
