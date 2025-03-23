@@ -7,65 +7,6 @@ import Peer from './lib/peer.js'
 
 const units = [' B', ' KB', ' MB', ' GB', ' TB']
 
-const announceList = [ // Comprehensive list of public trackers
-    // WebSockets (ws://, wss://) - Preferred for browsers
-    "wss://tracker.btorrent.xyz",
-    "wss://tracker.openwebtorrent.com",
-    "wss://wstracker.online",
-    "wss://tracker.webtorrent.dev",    //Added
-    "wss://tracker.fastcast.nz",      //Added
-    "wss://tracker.btorrent.xyz",     //Added
-    "wss://tracker.openwebtorrent.com",//Added
-    "wss://tracker.quix.cf:443/announce",
-
-    // HTTP (http://, https://) - Fallback
-    "https://tracker.ngosang.net:443/announce",
-    "https://tracker.opentrackr.org:443/announce",
-    "https://opentracker.i2p.rocks:443/announce",
-    "https://tracker.openbittorrent.com:443/announce",
-    "https://tr.v2ex.hk:443/announce",  //Added
-    "http://tracker.openbittorrent.com:80/announce",
-    "http://tracker.publicbt.com:80/announce",
-    "http://tracker.openbittorrent.com:80/announce",
-    "http://tracker.publicbt.com:80/announce",
-    "http://tracker.files.fm:6969/announce",
-    "http://tracker.dler.org:6969/announce",
-    "http://tracker.coppersurfer.tk:80/announce",
-    "http://tracker.leechers-paradise.org:6969/announce",
-    "http://tracker.mg64.net:6881/announce",
-    "http://tracker.monitor.uw.edu.pl:6969/announce",
-    "http://tracker.files.fm:6969/announce",
-    "http://retracker.telecom.by:80/announce",
-    "http://open.acgnxtracker.com:80/announce",
-    "http://bttracker.сип.рф:80/announce",
-    "http://tracker.skyts.net:6969/announce",
-    "http://exodus.desync.com:6969/announce",
-    "http://retracker.lanta-net.ru:80/announce",
-      "http://tracker.tiny-vps.com:6969/announce",
-
-    // UDP (udp://) - Preferred for Node.js, good fallback for browsers
-     "udp://tracker.opentrackr.org:1337/announce",
-    "udp://tracker.openbittorrent.com:80",
-    "udp://tracker.coppersurfer.tk:6969",
-    "udp://tracker.leechers-paradise.org:6969",
-    "udp://tracker.zer0day.to:1337",
-    "udp://explodie.org:6969",
-    "udp://tracker.opentrackr.org:1337/announce", //Double on list
-    "udp://tracker.openbittorrent.com:80/announce", // Double on list
-    "udp://tracker.coppersurfer.tk:6969/announce",// Double on list
-    "udp://tracker.leechers-paradise.org:6969/announce",// Double on list
-    "udp://9.rarbg.to:2710/announce",
-    "udp://9.rarbg.me:2710/announce",
-    "udp://tracker.slowcheetah.org:14710/announce",
-    "udp://tracker.publicbt.com:80/announce",
-    "udp://tracker.gbitt.info:80/announce",
-    "udp://tracker.0x.tf:1337/announce",  //Added
-    "udp://tracker.dler.org:6969/announce",//Added
-    "udp://open.stealth.si:8000/announce",//Added
-    "udp://opentracker.i2p.rocks:6969/announce",//Added
-    "udp://tracker.opentrackr.org:1337/announce", //Double
-];
-
 function requestTimeout (callback, delay) {
   const startedAt = Date.now()
   let animationFrame = requestAnimationFrame(tick)
@@ -92,10 +33,10 @@ export default class WebTorrentPlayer extends WebTorrent {
     super({ // WebTorrent Options - Explicitly set DHT and PEX, and a torrentPort
       dht: true,
       pex: true,
-      maxConns: Infinity,  // Remove max connections limit.
-      torrentPort: 0,   // Let OS choose port
-      ...options.WebTorrentOpts // Spread user-provided options
+      torrentPort: 6881, // Common port for torrents, good for port forwarding if user sets it up
+      ...options.WebTorrentOpts // Spread any user-provided options to override if needed
     })
+
     this.storeOpts = options.storeOpts || {}
 
     const scope = location.pathname.substr(0, location.pathname.lastIndexOf('/') + 1)
@@ -419,131 +360,6 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     })
   }
 
-   // Remove all limitations to number of connections
-   maxConns = Infinity; // Remove max connections limit.
-   _rechokeNumSlots = Infinity;  //Allow all peers to upload.  VERY aggressive.
-   _rechokeOptimisticTime = 0;  //Disable optimistic unchoking
-   _rechoke () { return; } //Disable rechoking entirely
-
-  _request (wire, pieceIndex, priority) { //remove choking and throttling, as well as hotswapping
-    if (this.bitfield.get(pieceIndex)) return false // we already have this piece
-    const piece = this.pieces[pieceIndex]
-
-    let reservation = wire.type === 'webSeed'
-      ? piece.reserveRemaining()
-      : piece.reserve()
-
-    //if (reservation === -1 && priority && this._hotswap(wire, pieceIndex)) {
-      //reservation = wire.type === 'webSeed'
-       // ? piece.reserveRemaining()
-        //: piece.reserve()
-    //}
-
-    if (reservation === -1) return false
-
-    let reservationObj = this._reservations[pieceIndex]
-    if (!reservationObj) {
-      reservationObj = this._reservations[pieceIndex] = []
-    }
-    let reservationIndex = reservationObj.indexOf(null)
-    if (reservationIndex === -1) reservationIndex = reservationObj.length
-    reservationObj[reservationIndex] = wire
-
-    const offset = piece.chunkOffset(reservation)
-    const length = wire.type === 'webSeed'
-      ? piece.chunkLengthRemaining(reservation)
-      : piece.chunkLength(reservation)
-      const cb = (err, buf) => {
-        if (this.destroyed) return
-  
-        if (!this.ready) return this.once('ready', () => { cb(err, buf) })
-  
-        reservationObj[reservationIndex] = null // remove from reservations
-  
-        if (piece !== this.pieces[pieceIndex]) return this._update()
-  
-        if (err) {
-          this._debug(
-            'error getting piece %s (offset: %s length: %s) from %s: %s',
-            pieceIndex, offset, length, `${wire.remoteAddress}:${wire.remotePort}`, err.message
-          )
-          if (wire.type === 'webSeed') {
-            piece.cancelRemaining(reservation)
-          } else {
-            piece.cancel(reservation)
-          }
-          return this._update()
-        }
-  
-        this._debug(
-          'got piece %s (offset: %s length: %s) from %s',
-          pieceIndex, offset, length, `${wire.remoteAddress}:${wire.remotePort}`
-        )
-  
-        if (!piece.set(reservation, buf, wire)) return this._update()
-  
-        const hash = piece.flush()
-        I(hash, err => {
-          if (this.destroyed) return
-  
-          if (err) {
-            this.pieces[pieceIndex] = new S(piece.length) // reset piece
-            this.emit('warning', new Error(`Piece ${pieceIndex} failed verification`))
-            this._update()
-          } else {
-            this._debug('piece verified %s', pieceIndex)
-            this.pieces[pieceIndex] = null
-            this._markVerified(pieceIndex)
-            this.wires.forEach(wire => {
-              wire.have(pieceIndex)
-            })
-            if (this._checkDone() && !this.destroyed) this.discovery.complete()
-          }
-        })
-      }
-      // Send the request, remove logic that limits it
-            wire.request(pieceIndex, offset, length, cb)
-      return true
-    }
-    _updateWire (wire) {
-      if (wire.destroyed) return false
-
-      // Don't request more if we aren't interested
-      if (!this._amInterested) return
-
-      // Don't request more if the peer doesn't have any pieces
-      if (!wire.peerPieces.some()) return
-
-      // Don't request more if this peer is a seeder (for this torrent)
-      if (wire.isSeeder) return
-
-      // If no files are selected, then try to start the torrent off by downloading
-      // a piece, otherwise we won't have any metadata to use to select files.
-      const hasSelections = this._selections.some(s => s.to - s.from > s.offset)
-      if (!hasSelections && this.metadata) return
-
-      // Send requests to the peer
-      let numRequests = 0
-      while (wire.requests.length < Infinity) { // Remove request limit
-        const piece = this._pickPiece(wire)
-        if (piece === -1) break // no piece to request
-        const rejected = !this._request(wire, piece, false) // Always attempt request
-        if (!rejected) {
-          numRequests++
-        }
-      }
-
-      if (numRequests) {
-        this._debug('requesting %s pieces from %s', numRequests, wire.remoteAddress)
-        return true
-      } else {
-        return false
-      }
-    }
-
-
-  _destroyStoreOnDestroy=true;
-
   async buildVideo (torrent, opts = {}) { // sets video source and creates a bunch of other media stuff
     // play wanted episode from opts, or the 1st episode, or 1st file [batches: plays wanted episode, single: plays the only episode, manually added: plays first or only file]
     this.cleanupVideo()
@@ -618,31 +434,6 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
         this.controls.downloadFile.href = url
       })
     }
-  }
-
-  // Modified createWriteStream to remove buffer limits
-  createWriteStream (file, opts) {
-    const stream = new WritableStream({ // from WritableStream
-      write: chunk => {
-        return new Promise((resolve, reject) => {
-          file.write(chunk, (err) => {
-            if (err) reject(err)
-            else resolve()
-          })
-        })
-      },
-      close: () => {
-        file.end()
-      },
-      abort: (reason) => {
-        file.destroy(new Error(reason))
-      }
-    }, {
-        highWaterMark: Infinity, // Remove highWaterMark limit
-        size: () => file.length // Always attempt to write all data
-    })
-
-    return stream
   }
 
   cleanupVideo () { // cleans up objects, attemps to clear as much video caching as possible
@@ -756,10 +547,10 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     this.emit('playlist', { files: this.videoFiles })
   }
 
-playNext () {
+  playNext () {
     clearTimeout(this.nextTimeout)
     this.nextTimeout = setTimeout(() => {
-            if (this.videoFiles) { // Ensure videoFiles is not undefined
+      if (this.videoFiles) { // Ensure videoFiles is not undefined
         let currentFileIndex = -1;
         for (let i = 0; i < this.videoFiles.length; i++) {
           if (this.videoFiles[i].name === this.currentFile.name) {
@@ -779,9 +570,10 @@ playNext () {
           this.emit('next', { file: this.currentFile, filemedia: this.nowPlaying });
         }
       }
-    }, 200)
+    }, 200);
   }
-playLast () {
+
+  playLast () {
     clearTimeout(this.nextTimeout)
     this.nextTimeout = setTimeout(() => {
       if (this.videoFiles) { // Ensure videoFiles is not undefined
@@ -804,7 +596,7 @@ playLast () {
           this.emit('prev', { file: this.currentFile, filemedia: this.nowPlaying });
         }
       }
-    }, 200)
+    }, 200);
   }
 
   toggleCast () {
@@ -1171,7 +963,7 @@ playLast () {
         })
       }
       // replace all html special tags with normal ones
-      subtitle.text.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/ /g, '\\h')
+      subtitle.text.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/ /g, '\\h')
     }
     return 'Dialogue: ' +
     (subtitle.layer || 0) + ',' +
@@ -1397,6 +1189,56 @@ playLast () {
   }
 
   playTorrent (torrentID, opts = {}) { // TODO: clean this up
+    const announceList = [ // Comprehensive list of public trackers (May need updates over time)
+      // WebSockets (ws://, wss://) - Preferred for browsers
+      "wss://tracker.btorrent.xyz",
+      "wss://tracker.openwebtorrent.com",
+      "wss://wstracker.online",
+      "wss://asdxwqw.com",
+      "wss://tracker.torrent.eu.org",
+      "wss://tracker.fastcast.nz",
+      "wss://tube.privacy.services:443/announce",
+      "wss://tracker.publicbt.com",
+      "wss://tracker.opentrackr.org:443/announce",
+
+      // HTTP (http://, https://) - Fallback, may be less efficient in browsers but good to include
+      "https://tracker.ngosang.net:443/announce",
+      "https://tracker.opentrackr.org:443/announce",
+      "https://opentracker.i2p.rocks:443/announce",
+      "https://tracker.openbittorrent.com:443/announce",
+      "https://tr.溯洄.top:443/announce",
+      "http://tracker.openbittorrent.com:80/announce",
+      "http://tracker. পাবলিক.তোমাকে.net:80/announce",
+      "http://tracker.mg64.net:6969/announce",
+      "http://tracker.monitor.uw.edu.pl:6969/announce",
+      "http://tracker.files.fm:6969/announce",
+      "http://retracker.telecom.by:80/announce",
+      "http://open.acgnxtracker.com:80/announce",
+      "http://bttracker.сип.рф:80/announce",
+      "http://tracker.ваниль.pw:80/announce",
+      "http://tracker.electro-torrent.pl:80/announce",
+      "http://tracker.dler.org:6969/announce",
+      "http://tracker.skyts.net:6969/announce",
+      "http://exodus.desync.com:6969/announce",
+      "http://bigfoot1945.se:6969/announce",
+      "http://retracker.lanta-net.ru:80/announce",
+      "http://tracker.tiny-vps.com:6969/announce",
+      "udp://tracker.opentrackr.org:1337/announce",
+      "udp://tracker.openbittorrent.com:80",
+      "udp://tracker.coppersurfer.tk:6969",
+      "udp://tracker.leechers-paradise.org:6969",
+      "udp://tracker.zer0day.to:1337",
+      "udp://explodie.org:6969",
+      "udp://tracker.torrent.eu.org:451/announce",
+      "udp://9.rarbg.me:2710/announce",
+      "udp://9.rarbg.to:2710/announce",
+      "udp://tracker.0x.tf:1337/announce",
+      "udp://tracker.dler.org:6969/announce",
+      "udp://open.stealth.si:8000/announce",
+      "udp://opentracker.i2p.rocks:6969/announce",
+      "udp://tracker.opentrackr.org:1337/announce",
+    ];
+
     const handleTorrent = (torrent, opts) => {
       torrent.on('noPeers', () => {
         this.emit('no-peers', torrent)
@@ -1430,7 +1272,7 @@ playLast () {
         storeOpts: this.storeOpts,
         storeCacheSlots: 0,
         store: HybridChunkStore,
-        announce: options.announceList || []
+        announce: announceList, // Use the comprehensive tracker list here
       }, torrent => {
         handleTorrent(torrent, opts)
       })
@@ -1445,11 +1287,57 @@ playLast () {
 
   // add torrent for offline download
   offlineDownload (torrentID) {
-     const torrent = this.add(torrentID, {
+    const announceList = [ // Reusing tracker list for offline downloads as well
+      "wss://tracker.btorrent.xyz",
+      "wss://tracker.openwebtorrent.com",
+      "wss://wstracker.online",
+      "wss://asdxwqw.com",
+      "wss://tracker.torrent.eu.org",
+      "wss://tracker.fastcast.nz",
+      "wss://tube.privacy.services:443/announce",
+      "wss://tracker.publicbt.com",
+      "wss://tracker.opentrackr.org:443/announce",
+      "https://tracker.ngosang.net:443/announce",
+      "https://tracker.opentrackr.org:443/announce",
+      "https://opentracker.i2p.rocks:443/announce",
+      "https://tracker.openbittorrent.com:443/announce",
+      "https://tr.溯洄.top:443/announce",
+      "http://tracker.openbittorrent.com:80/announce",
+      "http://tracker. পাবলিক.তোমাকে.net:80/announce",
+      "http://tracker.mg64.net:6969/announce",
+      "http://tracker.monitor.uw.edu.pl:6969/announce",
+      "http://tracker.files.fm:6969/announce",
+      "http://retracker.telecom.by:80/announce",
+      "http://open.acgnxtracker.com:80/announce",
+      "http://bttracker.сип.рф:80/announce",
+      "http://tracker.ваниль.pw:80/announce",
+      "http://tracker.electro-torrent.pl:80/announce",
+      "http://tracker.dler.org:6969/announce",
+      "http://tracker.skyts.net:6969/announce",
+      "http://exodus.desync.com:6969/announce",
+      "http://bigfoot1945.se:6969/announce",
+      "http://retracker.lanta-net.ru:80/announce",
+      "http://tracker.tiny-vps.com:6969/announce",
+      "udp://tracker.opentrackr.org:1337/announce",
+      "udp://tracker.openbittorrent.com:80",
+      "udp://tracker.coppersurfer.tk:6969",
+      "udp://tracker.leechers-paradise.org:6969",
+      "udp://tracker.zer0day.to:1337",
+      "udp://explodie.org:6969",
+      "udp://tracker.torrent.eu.org:451/announce",
+      "udp://9.rarbg.me:2710/announce",
+      "udp://9.rarbg.to:2710/announce",
+      "udp://tracker.0x.tf:1337/announce",
+      "udp://tracker.dler.org:6969/announce",
+      "udp://open.stealth.si:8000/announce",
+      "udp://opentracker.i2p.rocks:6969/announce",
+      "udp://tracker.opentrackr.org:1337/announce",
+    ];
+    const torrent = this.add(torrentID, {
       storeOpts: this.storeOpts,
       store: HybridChunkStore,
       storeCacheSlots: 0,
-      announce: options.announceList || []
+      announce: announceList, // Use tracker list for offline download too
     })
     torrent.on('metadata', () => {
       if (!this.offlineTorrents[torrent.infoHash]) {
@@ -1464,465 +1352,4 @@ playLast () {
     this.video.currentTime = this.video.duration * progressPercent / 100 || 0
     this.playVideo()
   }
-
-  dragBarStart (progressPercent) {
-    this.video.pause()
-    this.setProgress(progressPercent)
-  }
-
-  setProgress (progressPercent) {
-    progressPercent = progressPercent || 0
-    const currentTime = this.video.duration * progressPercent / 100 || 0
-    if (this.controls.progressWrapper) this.controls.progressWrapper.style.setProperty('--progress', progressPercent + '%')
-    if (this.controls.thumbnail) this.controls.thumbnail.src = this.thumbnailData.thumbnails[Math.floor(currentTime / this.thumbnailData.interval)] || ' '
-    if (this.controls.setProgress) {
-      this.controls.setProgress.dataset.elapsed = this.toTS(currentTime)
-      this.controls.setProgress.value = progressPercent
-    }
-    if (this.controls.progressWrapper) {
-      this.controls.progressWrapper.dataset.elapsed = this.toTS(currentTime)
-      this.controls.progressWrapper.dataset.remaining = this.toTS(this.video.duration - currentTime)
-    }
-  }
-
-  updateDisplay () {
-    if (this.currentFile && this.currentFile._torrent) {
-      if (this.player) this.player.style.setProperty('--download', this.currentFile.progress * 100 + '%')
-      if (this.controls.peers) this.controls.peers.dataset.value = this.currentFile._torrent.numPeers
-      if (this.controls.downSpeed) this.controls.downSpeed.dataset.value = this.prettyBytes(this.currentFile._torrent.downloadSpeed) + '/s'
-      if (this.controls.upSpeed) this.controls.upSpeed.dataset.value = this.prettyBytes(this.currentFile._torrent.uploadSpeed) + '/s'
-    }
-    setTimeout(() => requestAnimationFrame(() => this.updateDisplay()), 200)
-  }
-
-  createRadioElement (track, type) {
-    // type: captions audio
-    if ((type === 'captions' && this.controls.selectCaptions && this.controls.captionsButton) || (type === 'audio' && this.controls.selectAudio)) {
-      const frag = document.createDocumentFragment()
-      const input = document.createElement('input')
-      const label = document.createElement('label')
-      input.name = `${type}-radio-set`
-      input.type = 'radio'
-      input.id = type === 'captions' ? `${type}-${track ? track.number : 'off'}-radio` : `${type}-${track.id}-radio`
-      input.value = type === 'captions' ? track ? track.number : -1 : track.id
-      input.checked = type === 'captions' ? track?.number === this.subtitleData.current : track.enabled
-      label.htmlFor = type === 'captions' ? `${type}-${track ? track.number : 'off'}-radio` : `${type}-${track.id}-radio`
-      label.textContent = track
-        ? type === 'captions'
-            ? (track.language || (!Object.values(this.subtitleData.headers).some(header => header.language === 'eng' || header.language === 'en') ? 'eng' : track.type)) + (track.name ? ' - ' + track.name : '')
-            : (track.language || (!Object.values(this.video.audioTracks).some(track => track.language === 'eng' || track.language === 'en') ? 'eng' : track.label)) + (track.label ? ' - ' + track.label : '')
-        : 'OFF' // TODO: clean this up, TLDR assume english track if track lang is undefined || 'und' and there isnt an existing eng track already
-      frag.append(input)
-      frag.append(label)
-      if (type === 'captions') {
-        this.controls.selectCaptions.append(frag)
-        this.controls.captionsButton.removeAttribute('disabled')
-      } else {
-        this.controls.selectAudio.append(frag)
-      }
-    }
-  }
-
-  selectAudio (id) {
-    if (id !== undefined) {
-      for (const track of this.video.audioTracks) {
-        track.enabled = track.id === id
-      }
-      this.seek(-0.5) // stupid fix because video freezes up when chaging tracks
-    }
-  }
-
-  selectCaptions (trackNumber) {
-    if (trackNumber !== undefined) {
-      trackNumber = Number(trackNumber)
-      this.subtitleData.current = trackNumber
-      if (!this.subtitleData.timeout) {
-        this.subtitleData.timeout = setTimeout(() => {
-          this.subtitleData.timeout = undefined
-          if (this.subtitleData.renderer) {
-            this.subtitleData.renderer.setTrack(trackNumber !== -1 ? this.subtitleData.headers[trackNumber].header.slice(0, -1) + Array.from(this.subtitleData.tracks[trackNumber]).join('\n') : this.subtitleData.defaultHeader)
-          }
-        }, 1000)
-      }
-    }
-  }
-
-  constructSub (subtitle, isNotAss) {
-    if (isNotAss === true) { // converts VTT or other to SSA
-      const matches = subtitle.text.match(/<[^>]+>/g) // create array of all tags
-      if (matches) {
-        matches.forEach(match => {
-          if (/<\//.test(match)) { // check if its a closing tag
-            subtitle.text = subtitle.text.replace(match, match.replace('</', '{\\').replace('>', '0}'))
-          } else {
-            subtitle.text = subtitle.text.replace(match, match.replace('<', '{\\').replace('>', '1}'))
-          }
-        })
-      }
-      // replace all html special tags with normal ones
-      subtitle.text.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/ /g, '\\h')
-    }
-    return 'Dialogue: ' +
-    (subtitle.layer || 0) + ',' +
-    this.toTS(subtitle.time / 1000, true) + ',' +
-    this.toTS((subtitle.time + subtitle.duration) / 1000, true) + ',' +
-    (subtitle.style || 'Default') + ',' +
-    (subtitle.name || '') + ',' +
-    (subtitle.marginL || '0') + ',' +
-    (subtitle.marginR || '0') + ',' +
-    (subtitle.marginV || '0') + ',' +
-    (subtitle.effect || '') + ',' +
-    subtitle.text || ''
-  }
-
-  parseSubtitles (file, skipFiles) { // parse subtitles fully after a download is finished
-    return new Promise((resolve) => {
-      if (file.name.endsWith('.mkv')) {
-        let parser = new SubtitleParser()
-        this.handleSubtitleParser(parser, skipFiles)
-        const finish = () => {
-          console.log('Sub parsing finished', this.toTS((performance.now() - t0) / 1000))
-          this.subtitleData.parsed = true
-          this.subtitleData.stream?.destroy()
-          this.subtitleData.parser?.destroy()
-          fileStream?.destroy()
-          this.subtitleData.stream = undefined
-          this.subtitleData.parser = undefined
-          this.selectCaptions(this.subtitleData.current)
-          parser = undefined
-          if (!this.video.paused) {
-            this.video.pause()
-            this.playVideo()
-          }
-          resolve()
-        }
-        parser.once('tracks', tracks => {
-          if (!tracks.length) finish()
-        })
-        parser.once('finish', finish)
-        const t0 = performance.now()
-        console.log('Sub parsing started')
-        const fileStream = file.createReadStream()
-        this.subtitleData.parser = fileStream.pipe(parser)
-      } else {
-        resolve()
-      }
-    })
-  }
-
-  initParser (file) {
-    return new Promise(resolve => {
-      const stream = this.subtitleData.stream = new SubtitleParser()
-      this.handleSubtitleParser(this.subtitleData.stream)
-      stream.once('tracks', tracks => {
-        if (!tracks.length) {
-          this.subtitleData.parsed = true
-          resolve()
-          this.subtitleData.stream.destroy()
-          fileStreamStream.destroy()
-        }
-      })
-      stream.on('subtitle', () => {
-        resolve()
-        fileStreamStream.destroy()
-      })
-      const fileStreamStream = file.createReadStream({ end: file.length / 2 })
-      fileStreamStream.pipe(stream)
-    })
-  }
-
-  handleSubtitleParser (parser, skipFile) {
-    parser.once('tracks', tracks => {
-      if (!tracks.length) {
-        this.subtitleData.parsed = true
-      } else {
-        tracks.forEach(track => {
-          if (!this.subtitleData.tracks[track.number]) {
-            // overwrite webvtt or other header with custom one
-            if (track.type !== 'ass') track.header = this.subtitleData.defaultHeader
-            if (!this.subtitleData.current) {
-              this.subtitleData.current = track.number
-              this.createRadioElement(undefined, 'captions')
-            }
-            this.subtitleData.tracks[track.number] = new Set()
-            this.subtitleData.headers[track.number] = track
-            this.createRadioElement(track, 'captions')
-          }
-        })
-      }
-    })
-    parser.on('subtitle', (subtitle, trackNumber) => {
-      if (!this.subtitleData.parsed) {
-        if (!this.subtitleData.renderer) this.initSubtitleRenderer()
-        this.subtitleData.tracks[trackNumber].add(this.constructSub(subtitle, this.subtitleData.headers[trackNumber].type !== 'ass'))
-        if (this.subtitleData.current === trackNumber) this.selectCaptions(trackNumber)
-      }
-    })
-    if (!skipFile) {
-      parser.on('file', file => {
-        if (file.mimetype === 'application/x-truetype-font' || file.mimetype === 'application/font-woff' || file.mimetype === 'application/vnd.ms-opentype') {
-          this.subtitleData.fonts.push(URL.createObjectURL(new Blob([file.data], { type: file.mimetype })))
-        }
-      })
-    }
-  }
-
-  async initSubtitleRenderer () {
-    if (!this.subtitleData.renderer) {
-      const options = {
-        video: this.video,
-        targetFps: await this.fps,
-        subContent: this.subtitleData.headers[this.subtitleData.current].header.slice(0, -1),
-        renderMode: 'offscreen',
-        fonts: this.subtitleData.fonts,
-        fallbackFont: 'https://fonts.gstatic.com/s/roboto/v20/KFOlCnqEu92Fr1MmEU9fBBc4.woff2',
-        workerUrl: 'lib/subtitles-octopus-worker.js',
-        onReady: () => { // weird hack for laggy subtitles, this is some issue in SO
-          if (!this.video.paused) {
-            this.video.pause()
-            this.playVideo()
-          }
-        }
-      }
-      if (!this.subtitleData.renderer) {
-        this.subtitleData.renderer = new SubtitlesOctopus(options)
-        this.selectCaptions(this.subtitleData.current)
-      }
-    }
-  }
-
-  convertSubFile (file, isAss, callback) {
-    const regex = /(?:\d+\n)?(\S{9,12})\s?-->\s?(\S{9,12})(.*)\n([\s\S]*)$/i
-    file.getBuffer((_err, buffer) => {
-      const subtitles = isAss ? buffer.toString() : []
-      if (isAss) {
-        callback(subtitles)
-      } else {
-        const text = buffer.toString().replace(/\r/g, '')
-        for (const split of text.split('\n\n')) {
-          const match = split.match(regex)
-          if (match) {
-            match[1] = match[1].match(/.*[.,]\d{2}/)[0]
-            match[2] = match[2].match(/.*[.,]\d{2}/)[0]
-            if (match[1].length === 9) {
-              match[1] = '0:' + match[1]
-            } else {
-              if (match[1][0] === '0') {
-                match[1] = match[1].substring(1)
-              }
-            }
-            match[1].replace(',', '.')
-            if (match[2].length === 9) {
-              match[2] = '0:' + match[2]
-            } else {
-              if (match[2][0] === '0') {
-                match[2] = match[2].substring(1)
-              }
-            }
-            match[2].replace(',', '.')
-            const matches = match[4].match(/<[^>]+>/g) // create array of all tags
-            if (matches) {
-              matches.forEach(matched => {
-                if (/<\//.test(matched)) { // check if its a closing tag
-                  match[4] = match[4].replace(matched, matched.replace('</', '{\\').replace('>', '0}'))
-                } else {
-                  match[4] = match[4].replace(matched, matched.replace('<', '{\\').replace('>', '1}'))
-                }
-              })
-            }
-            subtitles.push('Dialogue: 0,' + match[1].replace(',', '.') + ',' + match[2].replace(',', '.') + ',Default,,0,0,0,,' + match[4])
-          }
-        }
-        callback(subtitles)
-      }
-    })
-  }
-
-  findSubtitleFiles (targetFile) {
-    const path = targetFile.path.split(targetFile.name)[0]
-    // array of subtitle files that match video name, or all subtitle files when only 1 vid file
-    const subtitleFiles = targetFile._torrent.files.filter(file => {
-      return this.subtitleExtensions.some(ext => file.name.endsWith(ext)) && (this.videoFiles.length === 1 ? true : file.path.split(path).length === 2)
-    })
-    if (subtitleFiles.length) {
-      this.createRadioElement(undefined, 'captions')
-      this.subtitleData.parsed = true
-      this.subtitleData.current = 0
-      for (const [index, file] of subtitleFiles.entries()) {
-        const isAss = file.name.endsWith('.ass') || file.name.endsWith('.ssa')
-        const extension = /\.(\w+)$/
-        const name = file.name.replace(targetFile.name, '') === file.name
-          ? file.name.replace(targetFile.name.replace(extension, ''), '').slice(0, -4).replace(/[,._-]/g, ' ').trim()
-          : file.name.replace(targetFile.name, '').slice(0, -4).replace(/[,._-]/g, ' ').trim()
-        const header = {
-          header: this.subtitleData.defaultHeader,
-          language: name,
-          number: index,
-          type: file.name.match(extension)[1]
-        }
-        this.subtitleData.headers.push(header)
-        this.subtitleData.tracks[index] = []
-        this.createRadioElement(header, 'captions')
-        this.convertSubFile(file, isAss, subtitles => {
-          if (isAss) {
-            this.subtitleData.headers[index].header = subtitles
-          } else {
-            this.subtitleData.tracks[index] = subtitles
-          }
-          if (this.subtitleData.current === index) this.selectCaptions(this.subtitleData.current)
-        })
-        this.initSubtitleRenderer()
-      }
-    }
-  }
-
-  postDownload () {
-    this.emit('download-done', { file: this.currentFile })
-    this.parseSubtitles(this.currentFile, true).then(() => {
-      if (this.generateThumbnails) {
-        this.finishThumbnails(this.video.src)
-      }
-    })
-  }
-  _destroyStoreOnDestroy=true;
-  // Remove all limitations to number of connections
-  maxConns = Infinity; // Remove max connections limit.
-  _rechokeNumSlots = Infinity;  //Allow all peers to upload.  VERY aggressive.
-  _rechokeOptimisticTime = 0;  //Disable optimistic unchoking
-  _rechoke () { return; } //Disable rechoking entirely
-  _request (wire, pieceIndex) {
-    if (this.bitfield.get(pieceIndex)) return false // we already have this piece
-    const piece = this.pieces[pieceIndex]
-
-    let reservation = wire.type === 'webSeed'
-      ? piece.reserveRemaining()
-      : piece.reserve()
-
-    if (reservation === -1) return false
-
-    let reservationObj = this._reservations[pieceIndex]
-    if (!reservationObj) {
-      reservationObj = this._reservations[pieceIndex] = []
-    }
-    let reservationIndex = reservationObj.indexOf(null)
-    if (reservationIndex === -1) reservationIndex = reservationObj.length
-    reservationObj[reservationIndex] = wire
-
-    const offset = piece.chunkOffset(reservation)
-    const length = wire.type === 'webSeed'
-      ? piece.chunkLengthRemaining(reservation)
-      : piece.chunkLength(reservation)
-    const cb = (err, buf) => {
-      if (this.destroyed) return
-
-      if (!this.ready) return this.once('ready', () => { cb(err, buf) })
-
-      reservationObj[reservationIndex] = null // remove from reservations
-
-      if (piece !== this.pieces[pieceIndex]) return this._update()
-
-      if (err) {
-        this._debug(
-          'error getting piece %s (offset: %s length: %s) from %s: %s',
-          pieceIndex, offset, length, `${wire.remoteAddress}:${wire.remotePort}`, err.message
-        )
-        if (wire.type === 'webSeed') {
-          piece.cancelRemaining(reservation)
-        } else {
-          piece.cancel(reservation)
-        }
-        return this._update()
-      }
-
-      this._debug(
-        'got piece %s (offset: %s length: %s) from %s',
-        pieceIndex, offset, length, `${wire.remoteAddress}:${wire.remotePort}`
-      )
-
-      if (!piece.set(reservation, buf, wire)) return this._update()
-
-      const hash = piece.flush()
-      I(hash, err => {
-        if (this.destroyed) return
-
-        if (err) {
-          this.pieces[pieceIndex] = new S(piece.length) // reset piece
-          this.emit('warning', new Error(`Piece ${pieceIndex} failed verification`))
-          this._update()
-        } else {
-          this._debug('piece verified %s', pieceIndex)
-          this.pieces[pieceIndex] = null
-          this._markVerified(pieceIndex)
-          this.wires.forEach(wire => {
-            wire.have(pieceIndex)
-          })
-          if (this._checkDone() && !this.destroyed) this.discovery.complete()
-        }
-      })
-    }
-      // Send the request
-        wire.request(pieceIndex, offset, length, cb)
-      return true
-    }
-  _updateWire (wire) {
-    if (wire.destroyed) return false
-
-    // Don't request more if we aren't interested
-    if (!this._amInterested) return
-
-    // Don't request more if the peer doesn't have any pieces
-    if (!wire.peerPieces.some()) return
-
-    // Don't request more if this peer is a seeder (for this torrent)
-    if (wire.isSeeder) return
-
-    // If no files are selected, then try to start the torrent off by downloading
-    // a piece, otherwise we won't have any metadata to use to select files.
-    const hasSelections = this._selections.some(s => s.to - s.from > s.offset)
-    if (!hasSelections && this.metadata) return
-
-    // Send requests to the peer
-    let numRequests = 0
-    while (wire.requests.length < Infinity) { // Remove request limit
-      const piece = this._pickPiece(wire)
-      if (piece === -1) break // no piece to request
-      const rejected = !this._request(wire, piece, false) // Always attempt request
-      if (!rejected) {
-        numRequests++
-      }
-    }
-
-    if (numRequests) {
-      this._debug('requesting %s pieces from %s', numRequests, wire.remoteAddress)
-      return true
-    } else {
-      return false
-    }
-  }
-//End of modifications
-
- createWriteStream (file, opts) {
-    const stream = new WritableStream({ // from WritableStream
-      write: chunk => {
-        return new Promise((resolve, reject) => {
-          file.write(chunk, (err) => {
-            if (err) reject(err)
-            else resolve()
-          })
-        })
-      },
-      close: () => {
-        file.end()
-      },
-      abort: (reason) => {
-        file.destroy(new Error(reason))
-      }
-    }, {
-      highWaterMark: Infinity, // Remove highWaterMark limit
-      size: () => file.length // Always attempt to write all data
-    })
-
-    return stream
-  }
-
 }
