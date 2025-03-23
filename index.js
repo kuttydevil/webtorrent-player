@@ -809,7 +809,8 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
               })
             }
             canvasVideo.onleavepictureinpicture = () => {
-              destroy()            canvasVideo.remove()
+              destroy()            
+            canvasVideo.remove()
             this.player.classList.remove('pip')
           }
         }
