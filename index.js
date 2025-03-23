@@ -815,7 +815,8 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
           }
         }
       } else {
-        this.video !== document.pictureInPictureElement ? this.video.requestPictureInPicture() : document.exitPictureInPicture()
+        this.video !== document.pictureInPictureElement ? 
+        this.video.requestPictureInPicture() : document.exitPictureInPicture()
       }
     }
   }
