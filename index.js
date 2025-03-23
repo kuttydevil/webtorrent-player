@@ -1,4 +1,3 @@
-/* global MediaMetadata, navNowPlaying */
 import WebTorrent from 'webtorrent'
 import { SubtitleParser, SubtitleStream } from 'matroska-subtitles'
 import HybridChunkStore from 'hybrid-chunk-store'
@@ -33,10 +32,10 @@ export default class WebTorrentPlayer extends WebTorrent {
     super({ // WebTorrent Options - Explicitly set DHT and PEX, and a torrentPort
       dht: true,
       pex: true,
-      torrentPort: 6881, // Common port for torrents, good for port forwarding if user sets it up
-      ...options.WebTorrentOpts // Spread any user-provided options to override if needed
+      maxConns: Infinity,  // Remove max connections limit.
+      torrentPort: 0,   // Let OS choose port
+      ...options.WebTorrentOpts // Spread user-provided options
     })
-
     this.storeOpts = options.storeOpts || {}
 
     const scope = location.pathname.substr(0, location.pathname.lastIndexOf('/') + 1)
@@ -360,7 +359,128 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     })
   }
 
-  async buildVideo (torrent, opts = {}) { // sets video source and creates a bunch of other media stuff
+   // Remove all limitations to number of connections
+   maxConns = Infinity; // Remove max connections limit.
+   _rechokeNumSlots = Infinity;  //Allow all peers to upload.  VERY aggressive.
+   _rechokeOptimisticTime = 0;  //Disable optimistic unchoking
+   _rechoke () { return; } //Disable rechoking entirely
+
+   _request (wire, pieceIndex) { // remove choking and throttling
+     if (this.bitfield.get(pieceIndex)) return false
+     const piece = this.pieces[pieceIndex]
+     let reservation = wire.type === 'webSeed'
+       ? piece.reserveRemaining()
+       : piece.reserve()
+
+     if (reservation === -1) return false
+
+     let reservationObj = this._reservations[pieceIndex]
+     if (!reservationObj) {
+       reservationObj = this._reservations[pieceIndex] = []
+     }
+     let reservationIndex = reservationObj.indexOf(null)
+     if (reservationIndex === -1) reservationIndex = reservationObj.length
+     reservationObj[reservationIndex] = wire
+
+     const offset = piece.chunkOffset(reservation)
+     const length = wire.type === 'webSeed'
+       ? piece.chunkLengthRemaining(reservation)
+       : piece.chunkLength(reservation)
+     function cb () {
+       if (r) return
+       r = true
+       this._update()
+     }
+     wire.request(pieceIndex, offset, length, (err, buf) => {
+       if (this.destroyed) return
+
+       if (!this.ready) return this.once('ready', () => { cb(err, buf) })
+
+       reservationObj[reservationIndex] = null // remove from reservations
+
+       if (piece !== this.pieces[pieceIndex]) return this._update()
+
+       if (err) {
+         this._debug(
+           'error getting piece %s (offset: %s length: %s) from %s: %s',
+           pieceIndex, offset, length, `${wire.remoteAddress}:${wire.remotePort}`, err.message
+         )
+         if (wire.type === 'webSeed') {
+           piece.cancelRemaining(reservation)
+         } else {
+           piece.cancel(reservation)
+         }
+         return this._update()
+       }
+
+       this._debug(
+         'got piece %s (offset: %s length: %s) from %s',
+         pieceIndex, offset, length, `${wire.remoteAddress}:${wire.remotePort}`
+       )
+
+       if (!piece.set(reservation, buf, wire)) return this._update()
+
+       const hash = piece.flush()
+       I(hash, err => {
+         if (this.destroyed) return
+
+         if (err) {
+           this.pieces[pieceIndex] = new S(piece.length) // reset piece
+           this.emit('warning', new Error(`Piece ${pieceIndex} failed verification`))
+           this._update()
+         } else {
+           this._debug('piece verified %s', pieceIndex)
+           this.pieces[pieceIndex] = null
+           this._markVerified(pieceIndex)
+           this.wires.forEach(wire => {
+             wire.have(pieceIndex)
+           })
+           this._checkDone() && !this.destroyed && this.discovery.complete()
+         }
+       })
+     })
+     return true
+   }
+
+  _updateWire (wire) {
+    if (wire.destroyed) return false
+
+    // Don't request more if we aren't interested
+    if (!this._amInterested) return
+
+    // Don't request more if the peer doesn't have any pieces
+    if (!wire.peerPieces.some()) return
+
+    // Don't request more if this peer is a seeder (for this torrent)
+    if (wire.isSeeder) return
+
+    // If no files are selected, then try to start the torrent off by downloading
+    // a piece, otherwise we won't have any metadata to use to select files.
+    const hasSelections = this._selections.some(s => s.to - s.from > s.offset)
+    if (!hasSelections && this.metadata) return
+
+    // Send requests to the peer
+    let numRequests = 0
+    while (wire.requests.length < Infinity) { // Remove request limit
+      const piece = this._pickPiece(wire)
+      if (piece === -1) break // no piece to request
+      const rejected = !this._request(wire, piece, false)
+      if (!rejected) {
+        numRequests++
+      }
+    }
+
+    if (numRequests) {
+      this._debug('requesting %s pieces from %s', numRequests, wire.remoteAddress)
+      return true
+    } else {
+      return false
+    }
+  }
+
+  _destroyStoreOnDestroy=true;
+
+  buildVideo (torrent, opts = {}) { // sets video source and creates a bunch of other media stuff
     // play wanted episode from opts, or the 1st episode, or 1st file [batches: plays wanted episode, single: plays the only episode, manually added: plays first or only file]
     this.cleanupVideo()
 
@@ -565,12 +685,12 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
             nowPlaying.episodeNumber += 1;
           }
           const torrent = this.currentFile._torrent;
-          this.buildVideo(torrent, { media: nowPlaying, file: this.videoFiles[currentFileIndex + 1] });
+          this.buildVideo(torrent, { media: nowPlaying, file: this.videoFiles[currentFileIndex + 1] })
         } else {
-          this.emit('next', { file: this.currentFile, filemedia: this.nowPlaying });
+          this.emit('next', { file: this.currentFile, filemedia: this.nowPlaying })
         }
       }
-    }, 200);
+    }, 200)
   }
 
   playLast () {
@@ -591,12 +711,12 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
             nowPlaying.episodeNumber -= 1;
           }
           const torrent = this.currentFile._torrent;
-          this.buildVideo(torrent, { media: nowPlaying, file: this.videoFiles[currentFileIndex - 1] });
+          this.buildVideo(torrent, { media: nowPlaying, file: this.videoFiles[currentFileIndex - 1] })
         } else {
-          this.emit('prev', { file: this.currentFile, filemedia: this.nowPlaying });
+          this.emit('prev', { file: this.currentFile, filemedia: this.nowPlaying })
         }
       }
-    }, 200);
+    }, 200)
   }
 
   toggleCast () {
@@ -1191,54 +1311,60 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
   playTorrent (torrentID, opts = {}) { // TODO: clean this up
     const announceList = [ // Comprehensive list of public trackers (May need updates over time)
       // WebSockets (ws://, wss://) - Preferred for browsers
-      "wss://tracker.btorrent.xyz",
-      "wss://tracker.openwebtorrent.com",
-      "wss://wstracker.online",
-      "wss://asdxwqw.com",
-      "wss://tracker.torrent.eu.org",
-      "wss://tracker.fastcast.nz",
-      "wss://tube.privacy.services:443/announce",
-      "wss://tracker.publicbt.com",
-      "wss://tracker.opentrackr.org:443/announce",
+      'wss://tracker.btorrent.xyz',
+      'wss://tracker.openwebtorrent.com',
+      'wss://wstracker.online',
+      'wss://tracker.webtorrent.dev',
+      'wss://tracker.fastcast.nz',
+      'wss://tracker.btorrent.xyz',
+      'wss://tracker.openwebtorrent.com',
+      'wss://tracker.quix.cf:443/announce',
+
+      // UDP (udp://) - Preferred for Node.js, good fallback for browsers
+      'udp://tracker.opentrackr.org:1337/announce',
+      'udp://tracker.coppersurfer.tk:6969/announce',
+      'udp://tracker.leechers-paradise.org:6969/announce',
+      'udp://tracker.zer0day.to:1337/announce',
+      'udp://explodie.org:6969/announce',
+      'udp://tracker.opentrackr.org:1337/announce',
+      'udp://tracker.openbittorrent.com:80/announce',
+      'udp://tracker.coppersurfer.tk:6969/announce',
+      'udp://tracker.leechers-paradise.org:6969/announce',
+      'udp://tracker.zer0day.to:1337/announce',
+      'udp://explodie.org:6969/announce',
+      'udp://eddie4.nl:6969/announce',
+      'udp://tracker.port443.xyz:6969/announce',
+      'udp://tracker.cyberia.is:6969/announce',
+      'udp://open.stealth.si:80/announce',
+      'udp://tracker.tiny-vps.com:6969/announce',
+      'udp://tracker.opentrackr.org:1337/announce',
+      'udp://tracker.openbittorrent.com:80/announce',
+      'udp://tracker.coppersurfer.tk:6969/announce',
+      'udp://tracker.leechers-paradise.org:6969/announce',
+      'udp://9.rarbg.to:2710/announce',
+      'udp://9.rarbg.me:2710/announce',
+      'udp://tracker.slowcheetah.org:14710/announce',
+      'udp://tracker.publicbt.com:80/announce',
+      'udp://tracker.gbitt.info:80/announce',
+      'udp://tracker.xku.tv:6969/announce',
+      'udp://tracker.moeking.me:6969/announce',
 
       // HTTP (http://, https://) - Fallback, may be less efficient in browsers but good to include
+      'http://tracker.openbittorrent.com:80/announce',
+      'http://tracker.publicbt.com:80/announce',
+      'http://tracker.openbittorrent.com:80/announce',
+      'http://tracker.publicbt.com:80/announce',
+      'http://tracker.files.fm:6969/announce',
+      'http://tracker.dler.org:6969/announce',
+      'http://tracker.coppersurfer.tk:80/announce',
+      'http://tracker.leechers-paradise.org:6969/announce',
+      'http://tracker.mg64.net:6881/announce',
       "https://tracker.ngosang.net:443/announce",
       "https://tracker.opentrackr.org:443/announce",
       "https://opentracker.i2p.rocks:443/announce",
       "https://tracker.openbittorrent.com:443/announce",
-      "https://tr.溯洄.top:443/announce",
-      "http://tracker.openbittorrent.com:80/announce",
-      "http://tracker. পাবলিক.তোমাকে.net:80/announce",
-      "http://tracker.mg64.net:6969/announce",
-      "http://tracker.monitor.uw.edu.pl:6969/announce",
-      "http://tracker.files.fm:6969/announce",
-      "http://retracker.telecom.by:80/announce",
-      "http://open.acgnxtracker.com:80/announce",
-      "http://bttracker.сип.рф:80/announce",
-      "http://tracker.ваниль.pw:80/announce",
-      "http://tracker.electro-torrent.pl:80/announce",
-      "http://tracker.dler.org:6969/announce",
-      "http://tracker.skyts.net:6969/announce",
-      "http://exodus.desync.com:6969/announce",
-      "http://bigfoot1945.se:6969/announce",
-      "http://retracker.lanta-net.ru:80/announce",
-      "http://tracker.tiny-vps.com:6969/announce",
-      "udp://tracker.opentrackr.org:1337/announce",
-      "udp://tracker.openbittorrent.com:80",
-      "udp://tracker.coppersurfer.tk:6969",
-      "udp://tracker.leechers-paradise.org:6969",
-      "udp://tracker.zer0day.to:1337",
-      "udp://explodie.org:6969",
-      "udp://tracker.torrent.eu.org:451/announce",
-      "udp://9.rarbg.me:2710/announce",
-      "udp://9.rarbg.to:2710/announce",
-      "udp://tracker.0x.tf:1337/announce",
-      "udp://tracker.dler.org:6969/announce",
-      "udp://open.stealth.si:8000/announce",
-      "udp://opentracker.i2p.rocks:6969/announce",
-      "udp://tracker.opentrackr.org:1337/announce",
-    ];
-
+      "https://tr.v2ex.hk:443/announce"
+    ]
     const handleTorrent = (torrent, opts) => {
       torrent.on('noPeers', () => {
         this.emit('no-peers', torrent)
@@ -1259,97 +1385,3 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
         this.cleanupTorrents()
       }
     }
-    document.location.hash = '#player'
-    this.cleanupVideo()
-    this.cleanupTorrents()
-    if (torrentID instanceof Object) {
-      handleTorrent(torrentID, opts)
-    } else if (this.get(torrentID)) {
-      handleTorrent(this.get(torrentID), opts)
-    } else {
-      this.add(torrentID, {
-        destroyStoreOnDestroy: this.destroyStore,
-        storeOpts: this.storeOpts,
-        storeCacheSlots: 0,
-        store: HybridChunkStore,
-        announce: announceList, // Use the comprehensive tracker list here
-      }, torrent => {
-        handleTorrent(torrent, opts)
-      })
-    }
-  }
-
-  // cleanup torrent and store
-  cleanupTorrents () {
-  // creates an array of all non-offline store torrents and removes them
-    this.torrents.filter(torrent => !this.offlineTorrents[torrent.infoHash]).forEach(torrent => torrent.destroy())
-  }
-
-  // add torrent for offline download
-  offlineDownload (torrentID) {
-    const announceList = [ // Reusing tracker list for offline downloads as well
-      "wss://tracker.btorrent.xyz",
-      "wss://tracker.openwebtorrent.com",
-      "wss://wstracker.online",
-      "wss://asdxwqw.com",
-      "wss://tracker.torrent.eu.org",
-      "wss://tracker.fastcast.nz",
-      "wss://tube.privacy.services:443/announce",
-      "wss://tracker.publicbt.com",
-      "wss://tracker.opentrackr.org:443/announce",
-      "https://tracker.ngosang.net:443/announce",
-      "https://tracker.opentrackr.org:443/announce",
-      "https://opentracker.i2p.rocks:443/announce",
-      "https://tracker.openbittorrent.com:443/announce",
-      "https://tr.溯洄.top:443/announce",
-      "http://tracker.openbittorrent.com:80/announce",
-      "http://tracker. পাবলিক.তোমাকে.net:80/announce",
-      "http://tracker.mg64.net:6969/announce",
-      "http://tracker.monitor.uw.edu.pl:6969/announce",
-      "http://tracker.files.fm:6969/announce",
-      "http://retracker.telecom.by:80/announce",
-      "http://open.acgnxtracker.com:80/announce",
-      "http://bttracker.сип.рф:80/announce",
-      "http://tracker.ваниль.pw:80/announce",
-      "http://tracker.electro-torrent.pl:80/announce",
-      "http://tracker.dler.org:6969/announce",
-      "http://tracker.skyts.net:6969/announce",
-      "http://exodus.desync.com:6969/announce",
-      "http://bigfoot1945.se:6969/announce",
-      "http://retracker.lanta-net.ru:80/announce",
-      "http://tracker.tiny-vps.com:6969/announce",
-      "udp://tracker.opentrackr.org:1337/announce",
-      "udp://tracker.openbittorrent.com:80",
-      "udp://tracker.coppersurfer.tk:6969",
-      "udp://tracker.leechers-paradise.org:6969",
-      "udp://tracker.zer0day.to:1337",
-      "udp://explodie.org:6969",
-      "udp://tracker.torrent.eu.org:451/announce",
-      "udp://9.rarbg.me:2710/announce",
-      "udp://9.rarbg.to:2710/announce",
-      "udp://tracker.0x.tf:1337/announce",
-      "udp://tracker.dler.org:6969/announce",
-      "udp://open.stealth.si:8000/announce",
-      "udp://opentracker.i2p.rocks:6969/announce",
-      "udp://tracker.opentrackr.org:1337/announce",
-    ];
-    const torrent = this.add(torrentID, {
-      storeOpts: this.storeOpts,
-      store: HybridChunkStore,
-      storeCacheSlots: 0,
-      announce: announceList, // Use tracker list for offline download too
-    })
-    torrent.on('metadata', () => {
-      if (!this.offlineTorrents[torrent.infoHash]) {
-        this.offlineTorrents[torrent.infoHash] = Array.from(torrent.torrentFile)
-        localStorage.setItem('offlineTorrents', JSON.stringify(this.offlineTorrents))
-      }
-      this.emit('offline-torrent', torrent)
-    })
-  }
-
-  dragBarEnd (progressPercent) {
-    this.video.currentTime = this.video.duration * progressPercent / 100 || 0
-    this.playVideo()
-  }
-}
