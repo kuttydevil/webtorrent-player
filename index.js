@@ -553,8 +553,8 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
       this.currentFile = this.videoFiles[0]
     }
     // opts.media: mediaTitle, episodeNumber, episodeTitle, episodeThumbnail, mediaCover, name
-    this.nowPlaying = (opts.media && (this.videoFiles.length === 1 || (opts.forceMedia && opts.file))) ? opts.media : this.resolveFileMedia ? await this.resolveFileMedia({ fileName: this.currentFile.name, method: 'SearchName' }) : undefined
-
+    (async () => { // Wrap the problematic line in an async function
+      this.nowPlaying = (options.media && (this.videoFiles.length === 1 || (options.forceMedia && options.file))) ? options.media : this.resolveFileMedia ? await this.resolveFileMedia({ fileName: this.currentFile.name, method: 'SearchName' }) : undefined
     if (this.nowPlaying) {
       if (navNowPlaying) navNowPlaying.classList.remove('d-none')
 
