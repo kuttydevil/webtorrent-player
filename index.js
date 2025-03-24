@@ -497,7 +497,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     }
   }
 
-  playVideo () {
+    async playVideo () {
     try {
       await this.video.play()
       this.changeControlsIcon('playPause', 'pause')
