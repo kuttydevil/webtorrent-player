@@ -791,7 +791,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
   checkCompletion () {
     if (!this.completed && this.video.duration - 180 < this.video.currentTime) {
       this.completed = true
-      this.emit('watched', { file: this.currentFile, filemedia: this.  updatePositionState () {
+      this.emit('watched', { file: this.currentFile, filemedia: this.updatePositionState () {
     if (this.video.duration) {
       navigator.mediaSession.setPositionState({
         duration: this.video.duration || 0,
