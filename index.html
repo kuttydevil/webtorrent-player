@@ -5,10 +5,10 @@
   <meta charset="UTF-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pwoliplay</title>
+  <title>PwoliPlay</title>
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <link href="lib/webtorrent-player.css" rel="stylesheet">
-  <link rel="icon" type="image/svg" href="/icon.svg">
+  <link rel="icon" type="image/svg" href="icon.svg">
   <style>
     :root {
       font-size: 12px;
@@ -56,7 +56,7 @@
     }
 
     #magn {
-      visibility: visible;
+      visibility: hidden;
       /* Hide but take up space.  Consider removing this if you want to center everything */
         width: 100%; /* Make the input full-width */
         max-width: 500px; /* But limit its maximum width (optional) */
@@ -179,9 +179,19 @@
       </span>
     </div>
   </section>
-  
-  <input type="text" id='magn' placeholder="Magnet/Torrent">
-  <button type="button" onclick=client.playTorrent(magn.value)>Play Magnet/Torrent</button>
+
+  <div id="button-container">
+    <input type="text" id='magn' placeholder="Magnet/Torrent">
+    <button type="button" class="svg-button" id="play-magnet-button"
+      onclick="client.playTorrent(document.getElementById('magn').value)">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" xml:space="preserve">
+        <path d="M46.014 31.105 25.197 20.697a1.003 1.003 0 0 0-1.447.895v20.816a1 1 0 0 0 1.447.895l20.817-10.408a1 1 0 0 0 0-1.79M25.75 40.79V23.21L43.33 32z" />
+        <path
+          d="M32 0C14.327 0 0 14.327 0 32s14.327 32 32 32 32-14.327 32-32S49.673 0 32 0m0 62C15.458 62 2 48.542 2 32S15.458 2 32 2s30 13.458 30 30-13.458 30-30 30">
+        <title>Play Magnet/Torrent</title>
+        <path d="M8 5v14l11-7z" /></svg>
+    </button>
+  </div>
 
   <script src="dist/bundle.js"></script>
   <script>
@@ -241,7 +251,6 @@
       }
     }
 
-
     // Function to automatically paste the magnet URI from the URL
     function autoPasteMagnetFromURL() {
       const urlParams = new URLSearchParams(window.location.search);
@@ -266,8 +275,6 @@
 
     // Call the function when the page loads
     autoPasteMagnetFromURL();
-
-    
   </script>
 </body>
 
