@@ -33,11 +33,12 @@ export default class WebTorrentPlayer extends WebTorrent {
     super({ // WebTorrent Options - Explicitly set DHT and PEX, and a torrentPort
       dht: true,
       pex: true,
-      torrentPort: 6881, // Common port for torrents, good for port forwarding if user sets it up
+      maxConnections: 100, // Overall max connections
       ...options.WebTorrentOpts // Spread any user-provided options to override if needed
     })
 
     this.storeOpts = options.storeOpts || {}
+    this.maxConnectionsPerTorrent = options.maxConnectionsPerTorrent || 50; // Default to 50
 
     const scope = location.pathname.substr(0, location.pathname.lastIndexOf('/') + 1)
     const worker = location.origin + scope + 'sw.js' === navigator.serviceWorker?.controller?.scriptURL && navigator.serviceWorker.controller
@@ -436,7 +437,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     }
   }
 
-  cleanupVideo () { // cleans up objects, attemps to clear as much video caching as possible
+  cleanupVideo () {
     this.presentationConnection?.terminate()
     if (document.pictureInPictureElement) document.exitPictureInPicture()
     this.subtitleData.renderer?.destroy()
@@ -496,7 +497,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     }
   }
 
-  async playVideo () {
+  playVideo () {
     try {
       await this.video.play()
       this.changeControlsIcon('playPause', 'pause')
@@ -620,14 +621,6 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
       peer = null
     })
 
-    peer.signalingPort.onmessage = ({ data }) => {
-      this.presentationConnection.send(data)
-    }
-
-    this.presentationConnection.addEventListener('message', ({ data }) => {
-      peer.signalingPort.postMessage(data)
-    })
-
     peer.dc.onopen = async () => {
       await this.fps
       if (peer && this.presentationConnection) {
@@ -711,7 +704,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
       const renderFrame = () => {
         context.drawImage(this.video, 0, 0)
         if (!noSubs) context.drawImage(this.subtitleData.renderer?.canvas, 0, 0, canvas.width, canvas.height)
-        loop = requestTimeout(renderFrame, 500 / fps)
+        loop = requestAnimationFrame(renderFrame)
       }
       loop = requestAnimationFrame(renderFrame)
       destroy = () => {
@@ -798,11 +791,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
   checkCompletion () {
     if (!this.completed && this.video.duration - 180 < this.video.currentTime) {
       this.completed = true
-      this.emit('watched', { file: this.currentFile, filemedia: this.nowPlaying })
-    }
-  }
-
-  updatePositionState () {
+      this.emit('watched', { file: this.currentFile, filemedia: this.  updatePositionState () {
     if (this.video.duration) {
       navigator.mediaSession.setPositionState({
         duration: this.video.duration || 0,
@@ -1058,7 +1047,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
       if (!this.subtitleData.parsed) {
         if (!this.subtitleData.renderer) this.initSubtitleRenderer()
         this.subtitleData.tracks[trackNumber].add(this.constructSub(subtitle, this.subtitleData.headers[trackNumber].type !== 'ass'))
-        if (this.subtitleData.current === trackNumber) this.selectCaptions(trackNumber)
+        if (this.subtitleData.current === trackNumber) this.selectCaptions(this.subtitleData.current)
       }
     })
     if (!skipFile) {
@@ -1208,7 +1197,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
       "https://tracker.openbittorrent.com:443/announce",
       "https://tr.溯洄.top:443/announce",
       "http://tracker.openbittorrent.com:80/announce",
-      "http://tracker. পাবলিক.তোমাকে.net:80/announce",
+      "http://tracker. पब्लिक.তোমাকে.net:80/announce",
       "http://tracker.mg64.net:6969/announce",
       "http://tracker.monitor.uw.edu.pl:6969/announce",
       "http://tracker.files.fm:6969/announce",
@@ -1303,7 +1292,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
       "https://tracker.openbittorrent.com:443/announce",
       "https://tr.溯洄.top:443/announce",
       "http://tracker.openbittorrent.com:80/announce",
-      "http://tracker. পাবলিক.তোমাকে.net:80/announce",
+      "http://tracker. पब्लिक.তোমাকে.net:80/announce",
       "http://tracker.mg64.net:6969/announce",
       "http://tracker.monitor.uw.edu.pl:6969/announce",
       "http://tracker.files.fm:6969/announce",
@@ -1348,8 +1337,4 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     })
   }
 
-  dragBarEnd (progressPercent) {
-    this.video.currentTime = this.video.duration * progressPercent / 100 || 0
-    this.playVideo()
-  }
 }
