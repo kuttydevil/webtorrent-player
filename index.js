@@ -30,15 +30,9 @@ function cancelTimeout (timeout) {
 
 export default class WebTorrentPlayer extends WebTorrent {
   constructor (options = {}) {
-    super({ // WebTorrent Options - Explicitly set DHT and PEX, and a torrentPort
-      dht: true,
-      pex: true,
-      maxConnections: 100, // Overall max connections
-      ...options.WebTorrentOpts // Spread any user-provided options to override if needed
-    })
+    super(options.WebTorrentOpts)
 
     this.storeOpts = options.storeOpts || {}
-    this.maxConnectionsPerTorrent = options.maxConnectionsPerTorrent || 50; // Default to 50
 
     const scope = location.pathname.substr(0, location.pathname.lastIndexOf('/') + 1)
     const worker = location.origin + scope + 'sw.js' === navigator.serviceWorker?.controller?.scriptURL && navigator.serviceWorker.controller
@@ -364,16 +358,10 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
   async buildVideo (torrent, opts = {}) { // sets video source and creates a bunch of other media stuff
     // play wanted episode from opts, or the 1st episode, or 1st file [batches: plays wanted episode, single: plays the only episode, manually added: plays first or only file]
     this.cleanupVideo()
-
-    // Deselect the previous file if it exists
-    if (this.currentFile && this.currentFile._torrent) { // Make sure currentFile and its torrent exist
-      this.currentFile.deselect() // Deselect the previously playing file
-    }
-
     if (opts.file) {
       this.currentFile = opts.file
     } else if (this.videoFiles.length > 1) {
-      this.currentFile = this.videoFiles.find(async file => await this.resolveFileMedia({ fileName: file.name }).then(FileMedia => (Number(FileMedia.episodeNumber) === Number(opts.episode || 1)) || (FileMedia === opts.media))) || this.videoFiles[0]
+      this.currentFile = this.videoFiles.filter(async file => await this.resolveFileMedia({ fileName: file.name }).then(FileMedia => (Number(FileMedia.episodeNumber) === Number(opts.episode || 1)) || (FileMedia === opts.media)))[0] || this.videoFiles[0]
     } else {
       this.currentFile = this.videoFiles[0]
     }
@@ -437,7 +425,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     }
   }
 
-  cleanupVideo () {
+  cleanupVideo () { // cleans up objects, attemps to clear as much video caching as possible
     this.presentationConnection?.terminate()
     if (document.pictureInPictureElement) document.exitPictureInPicture()
     this.subtitleData.renderer?.destroy()
@@ -497,7 +485,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
     }
   }
 
-    async playVideo () {
+  async playVideo () {
     try {
       await this.video.play()
       this.changeControlsIcon('playPause', 'pause')
@@ -551,53 +539,29 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
   playNext () {
     clearTimeout(this.nextTimeout)
     this.nextTimeout = setTimeout(() => {
-      if (this.videoFiles) { // Ensure videoFiles is not undefined
-        let currentFileIndex = -1;
-        for (let i = 0; i < this.videoFiles.length; i++) {
-          if (this.videoFiles[i].name === this.currentFile.name) {
-            currentFileIndex = i;
-            break;
-          }
-        }
-
-        if (currentFileIndex !== -1 && currentFileIndex < this.videoFiles.length - 1) {
-          const nowPlaying = this.nowPlaying;
-          if (nowPlaying && nowPlaying.episodeNumber != null) { // Check if nowPlaying and episodeNumber exist before incrementing
-            nowPlaying.episodeNumber += 1;
-          }
-          const torrent = this.currentFile._torrent;
-          this.buildVideo(torrent, { media: nowPlaying, file: this.videoFiles[currentFileIndex + 1] });
-        } else {
-          this.emit('next', { file: this.currentFile, filemedia: this.nowPlaying });
-        }
+      if (this.videoFiles?.indexOf(this.currentFile) < this.videoFiles?.length - 1) {
+        const nowPlaying = this.nowPlaying
+        nowPlaying.episodeNumber += 1
+        const torrent = this.currentFile._torrent
+        this.buildVideo(torrent, { media: nowPlaying, file: this.videoFiles[this.videoFiles.indexOf(this.currentFile) + 1] })
+      } else {
+        this.emit('next', { file: this.currentFile, filemedia: this.nowPlaying })
       }
-    }, 200);
+    }, 200)
   }
 
   playLast () {
     clearTimeout(this.nextTimeout)
     this.nextTimeout = setTimeout(() => {
-      if (this.videoFiles) { // Ensure videoFiles is not undefined
-        let currentFileIndex = -1;
-        for (let i = 0; i < this.videoFiles.length; i++) {
-          if (this.videoFiles[i].name === this.currentFile.name) {
-            currentFileIndex = i;
-            break;
-          }
-        }
-
-        if (currentFileIndex > 0) {
-          const nowPlaying = this.nowPlaying;
-          if (nowPlaying && nowPlaying.episodeNumber != null) { // Check if nowPlaying and episodeNumber exist before decrementing
-            nowPlaying.episodeNumber -= 1;
-          }
-          const torrent = this.currentFile._torrent;
-          this.buildVideo(torrent, { media: nowPlaying, file: this.videoFiles[currentFileIndex - 1] });
-        } else {
-          this.emit('prev', { file: this.currentFile, filemedia: this.nowPlaying });
-        }
+      if (this.videoFiles?.indexOf(this.currentFile)) {
+        const nowPlaying = this.nowPlaying
+        nowPlaying.episodeNumber -= 1
+        const torrent = this.currentFile._torrent
+        this.buildVideo(torrent, { media: nowPlaying, file: this.videoFiles[this.videoFiles.indexOf(this.currentFile) - 1] })
+      } else {
+        this.emit('prev', { file: this.currentFile, filemedia: this.nowPlaying })
       }
-    }, 200);
+    }, 200)
   }
 
   toggleCast () {
@@ -619,6 +583,14 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
       this.changeControlsIcon('toggleCast', 'cast')
       this.player.classList.remove('pip')
       peer = null
+    })
+
+    peer.signalingPort.onmessage = ({ data }) => {
+      this.presentationConnection.send(data)
+    }
+
+    this.presentationConnection.addEventListener('message', ({ data }) => {
+      peer.signalingPort.postMessage(data)
     })
 
     peer.dc.onopen = async () => {
@@ -704,7 +676,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
       const renderFrame = () => {
         context.drawImage(this.video, 0, 0)
         if (!noSubs) context.drawImage(this.subtitleData.renderer?.canvas, 0, 0, canvas.width, canvas.height)
-        loop = requestAnimationFrame(renderFrame)
+        loop = requestTimeout(renderFrame, 500 / fps)
       }
       loop = requestAnimationFrame(renderFrame)
       destroy = () => {
@@ -789,10 +761,13 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
   }
 
   checkCompletion () {
-        if (!this.completed && this.video.duration - 180 < this.video.currentTime) {
+    if (!this.completed && this.video.duration - 180 < this.video.currentTime) {
       this.completed = true
       this.emit('watched', { file: this.currentFile, filemedia: this.nowPlaying })
     }
+  }
+
+  updatePositionState () {
     if (this.video.duration) {
       navigator.mediaSession.setPositionState({
         duration: this.video.duration || 0,
@@ -953,7 +928,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
         })
       }
       // replace all html special tags with normal ones
-      subtitle.text.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/ /g, '\\h')
+      subtitle.text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, '\\h')
     }
     return 'Dialogue: ' +
     (subtitle.layer || 0) + ',' +
@@ -1048,7 +1023,7 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
       if (!this.subtitleData.parsed) {
         if (!this.subtitleData.renderer) this.initSubtitleRenderer()
         this.subtitleData.tracks[trackNumber].add(this.constructSub(subtitle, this.subtitleData.headers[trackNumber].type !== 'ass'))
-        if (this.subtitleData.current === trackNumber) this.selectCaptions(this.subtitleData.current)
+        if (this.subtitleData.current === trackNumber) this.selectCaptions(trackNumber)
       }
     })
     if (!skipFile) {
@@ -1179,56 +1154,6 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
   }
 
   playTorrent (torrentID, opts = {}) { // TODO: clean this up
-    const announceList = [ // Comprehensive list of public trackers (May need updates over time)
-      // WebSockets (ws://, wss://) - Preferred for browsers
-      "wss://tracker.btorrent.xyz",
-      "wss://tracker.openwebtorrent.com",
-      "wss://wstracker.online",
-      "wss://asdxwqw.com",
-      "wss://tracker.torrent.eu.org",
-      "wss://tracker.fastcast.nz",
-      "wss://tube.privacy.services:443/announce",
-      "wss://tracker.publicbt.com",
-      "wss://tracker.opentrackr.org:443/announce",
-
-      // HTTP (http://, https://) - Fallback, may be less efficient in browsers but good to include
-      "https://tracker.ngosang.net:443/announce",
-      "https://tracker.opentrackr.org:443/announce",
-      "https://opentracker.i2p.rocks:443/announce",
-      "https://tracker.openbittorrent.com:443/announce",
-      "https://tr.溯洄.top:443/announce",
-      "http://tracker.openbittorrent.com:80/announce",
-      "http://tracker. पब्लिक.তোমাকে.net:80/announce",
-      "http://tracker.mg64.net:6969/announce",
-      "http://tracker.monitor.uw.edu.pl:6969/announce",
-      "http://tracker.files.fm:6969/announce",
-      "http://retracker.telecom.by:80/announce",
-      "http://open.acgnxtracker.com:80/announce",
-      "http://bttracker.сип.рф:80/announce",
-      "http://tracker.ваниль.pw:80/announce",
-      "http://tracker.electro-torrent.pl:80/announce",
-      "http://tracker.dler.org:6969/announce",
-      "http://tracker.skyts.net:6969/announce",
-      "http://exodus.desync.com:6969/announce",
-      "http://bigfoot1945.se:6969/announce",
-      "http://retracker.lanta-net.ru:80/announce",
-      "http://tracker.tiny-vps.com:6969/announce",
-      "udp://tracker.opentrackr.org:1337/announce",
-      "udp://tracker.openbittorrent.com:80",
-      "udp://tracker.coppersurfer.tk:6969",
-      "udp://tracker.leechers-paradise.org:6969",
-      "udp://tracker.zer0day.to:1337",
-      "udp://explodie.org:6969",
-      "udp://tracker.torrent.eu.org:451/announce",
-      "udp://9.rarbg.me:2710/announce",
-      "udp://9.rarbg.to:2710/announce",
-      "udp://tracker.0x.tf:1337/announce",
-      "udp://tracker.dler.org:6969/announce",
-      "udp://open.stealth.si:8000/announce",
-      "udp://opentracker.i2p.rocks:6969/announce",
-      "udp://tracker.opentrackr.org:1337/announce",
-    ];
-
     const handleTorrent = (torrent, opts) => {
       torrent.on('noPeers', () => {
         this.emit('no-peers', torrent)
@@ -1262,7 +1187,15 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
         storeOpts: this.storeOpts,
         storeCacheSlots: 0,
         store: HybridChunkStore,
-        announce: announceList, // Use the comprehensive tracker list here
+        announce: this.tracker.announce || [
+          "wss://tracker.btorrent.xyz",
+        "wss://tracker.openwebtorrent.com",
+        "wss://wstracker.online",
+        "wss://asdxwqw.com",
+        "wss://tracker.openwebtorrent.com",
+        "wss://tracker.btorrent.xyz",
+        "wss://tracker.novage.com.ua",
+        ]
       }, torrent => {
         handleTorrent(torrent, opts)
       })
@@ -1277,57 +1210,19 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
 
   // add torrent for offline download
   offlineDownload (torrentID) {
-    const announceList = [ // Reusing tracker list for offline downloads as well
-      "wss://tracker.btorrent.xyz",
-      "wss://tracker.openwebtorrent.com",
-      "wss://wstracker.online",
-      "wss://asdxwqw.com",
-      "wss://tracker.torrent.eu.org",
-      "wss://tracker.fastcast.nz",
-      "wss://tube.privacy.services:443/announce",
-      "wss://tracker.publicbt.com",
-      "wss://tracker.opentrackr.org:443/announce",
-      "https://tracker.ngosang.net:443/announce",
-      "https://tracker.opentrackr.org:443/announce",
-      "https://opentracker.i2p.rocks:443/announce",
-      "https://tracker.openbittorrent.com:443/announce",
-      "https://tr.溯洄.top:443/announce",
-      "http://tracker.openbittorrent.com:80/announce",
-      "http://tracker. पब्लिक.তোমাকে.net:80/announce",
-      "http://tracker.mg64.net:6969/announce",
-      "http://tracker.monitor.uw.edu.pl:6969/announce",
-      "http://tracker.files.fm:6969/announce",
-      "http://retracker.telecom.by:80/announce",
-      "http://open.acgnxtracker.com:80/announce",
-      "http://bttracker.сип.рф:80/announce",
-      "http://tracker.ваниль.pw:80/announce",
-      "http://tracker.electro-torrent.pl:80/announce",
-      "http://tracker.dler.org:6969/announce",
-      "http://tracker.skyts.net:6969/announce",
-      "http://exodus.desync.com:6969/announce",
-      "http://bigfoot1945.se:6969/announce",
-      "http://retracker.lanta-net.ru:80/announce",
-      "http://tracker.tiny-vps.com:6969/announce",
-      "udp://tracker.opentrackr.org:1337/announce",
-      "udp://tracker.openbittorrent.com:80",
-      "udp://tracker.coppersurfer.tk:6969",
-      "udp://tracker.leechers-paradise.org:6969",
-      "udp://tracker.zer0day.to:1337",
-      "udp://explodie.org:6969",
-      "udp://tracker.torrent.eu.org:451/announce",
-      "udp://9.rarbg.me:2710/announce",
-      "udp://9.rarbg.to:2710/announce",
-      "udp://tracker.0x.tf:1337/announce",
-      "udp://tracker.dler.org:6969/announce",
-      "udp://open.stealth.si:8000/announce",
-      "udp://opentracker.i2p.rocks:6969/announce",
-      "udp://tracker.opentrackr.org:1337/announce",
-    ];
     const torrent = this.add(torrentID, {
       storeOpts: this.storeOpts,
       store: HybridChunkStore,
       storeCacheSlots: 0,
-      announce: announceList, // Use tracker list for offline download too
+      announce: this.tracker.announce || [
+        "wss://tracker.btorrent.xyz",
+        "wss://tracker.openwebtorrent.com",
+        "wss://wstracker.online",
+        "wss://asdxwqw.com",
+        "wss://tracker.openwebtorrent.com",
+        "wss://tracker.btorrent.xyz",
+        "wss://tracker.novage.com.ua",
+      ]
     })
     torrent.on('metadata', () => {
       if (!this.offlineTorrents[torrent.infoHash]) {
@@ -1337,5 +1232,4 @@ Style: Default,${options.defaultSSAStyles || 'Roboto Medium,26,&H00FFFFFF,&H0000
       this.emit('offline-torrent', torrent)
     })
   }
-
 }
